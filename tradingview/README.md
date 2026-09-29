@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.7, built from episodes 1-19 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.8, built from episodes 1-20 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -32,6 +32,7 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 17 | Scaling in: split the same risk, never add risk. Scale within a zone, or add only on new confirmed models. No averaging down. | *Entry scaling* setting. See below. |
 | 18 | News is the driver, liquidity is the destination. Know the calendar, no new entries before news, manage what you have, let the candle close, trade the aftermath. | News window, `NEWS` sweep tags, news-start alert. See below. |
 | 19 | Nested ranges, range resets only on displacement, stacking premium / discount across timeframes for A+ setups | Range stack row, A+ / A / B grade, displacement-only resets. See below. |
+| 20 | Time and price: kill zones, silver bullet windows, crypto trading day, time as a filter and grade, never an entry on its own | Confirmed session times, afternoon window, crypto window, time-based grade downgrade. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -96,19 +97,24 @@ No zone tag, no displacement, or under 2R means no signal. The dashboard shows w
 - Setups are graded **A+** (every range on the right side), **A** (all but one) or **B**. The grade is on each signal label. *Require at least N ranges* can make stacking a filter. *Grade setups... risk more on A+* (off by default) lifts the risk from your normal % to the A+ % (default 2%), as he describes.
 - The chart dealing range now resets only on **expansion with displacement**. A sweep, SFP or deviation beyond the range leaves it unchanged. After a displacement reset, the old range high / low stays on the chart as a level of interest (support / resistance flip). The higher-timeframe ranges use the plain swing rule and do not have this displacement check yet.
 
+**Time and price (episode 20).** Time is a filter and a grade. It never creates an entry by itself; the model still has to play out.
+- Session times (all New York time, now taken from the video): London kill zone 02:00-05:00, New York kill zone 07:00-10:00, afternoon window 13:30-16:30 (weaker, mostly continuation or a retrace, so it only counts as a kill zone if you switch that on), silver bullet windows 03:00-04:00, 10:00-11:00 and 14:00-15:00. The Asia range (20:00-00:00) is my default for his "overnight session".
+- For crypto he suggests treating 08:00-21:00 UTC as the trading day. That window can be made a hard filter.
+- **Grading:** a setup outside the kill zones is downgraded one grade (A+ to A, A to B) on the label and in the dashboard. Turn it off with *Downgrade a setup*. Combined with *Grade setups by range stack*, an A+ setup can carry the larger risk %.
+- Judas markers now say whether the Asian-range sweep happened in the London or New York window (his pattern: London manipulation, New York distribution). Alerts fire when the London and New York kill zones start.
+- He points out that back-testing pattern-only setups overstates results because many losers happen outside these windows.
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 20-25, not read yet)
+## Not yet implemented (episodes 21-25, not read yet)
 
-Episodes 20-25 are:
-kill zones, SMT divergence,
+Episodes 21-25 are:
+SMT divergence,
 liquidity trap and learning liquidity, best-trade breakdown, and trading psychology.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-19 were supplied by hand. Episodes 20-25 are **not** in the script yet.
-The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
-not confirmed from his kill-zone episode.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-20 were supplied by hand. Episodes 21-25 are **not** in the script yet.
 
 ## Alerts
 

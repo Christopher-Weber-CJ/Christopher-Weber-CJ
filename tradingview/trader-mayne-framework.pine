@@ -1,6 +1,6 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-19: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-20: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
@@ -8,7 +8,8 @@
 // the seven no-trade disqualifiers, and the risk framework (stop = invalidation, position sizing,
 // 2R exits with partials at internal liquidity, break-even win-rate math), and scaling in
 // (split the same risk across a zone, or add only on new confirmed models), news as a liquidity
-// driver, and nested dealing ranges (range stacking, displacement-only range resets).
+// driver, nested dealing ranges (range stacking, displacement-only range resets), and time as a
+// filter and grade (kill zones, silver bullet windows, crypto trading day).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -72,6 +73,10 @@ sbC        = input.session("1400-1500", "Silver bullet window 3", group = G_SES)
 asiaS      = input.session("2000-0000", "Asia (accumulation)", group = G_SES)
 lonS       = input.session("0200-0500", "London kill zone", group = G_SES)
 nyS        = input.session("0700-1000", "New York kill zone", group = G_SES)
+pmS        = input.session("1330-1630", "New York afternoon window (weaker: continuation / retrace)", group = G_SES)
+allowPM    = input.bool(false, "Count the afternoon window as a kill zone", group = G_SES)
+cryptoS    = input.session("0800-2100", "Crypto trading day (UTC)", group = G_SES)
+timeGrade  = input.bool(true, "Downgrade a setup one grade when it is outside the kill zones", group = G_SES)
 showAsia   = input.bool(true, "Show Asian range", group = G_SES)
 showJudas  = input.bool(true, "Mark Judas swings (Asian range sweep + reclaim)", group = G_SES)
 showOpens  = input.bool(true, "Plot daily / weekly open", group = G_SES)
@@ -86,6 +91,7 @@ minScoreEnt = input.int(3, "General model: minimum zone score to trade", minval 
 entryMode   = input.string("Zone edge", "Entry at", options = ["Zone edge", "50% mean", "Bar close"], group = G_ENT)
 stopMode    = input.string("Auto", "Stop beyond", options = ["Auto", "Zone edge", "Zone extreme", "Context POI"], tooltip = "Auto = his rule: continuation setups (sync timeframe already agrees) use the chart swing before the break; reversal setups use the context-timeframe POI. Zone extreme = chart swing / leg extreme. Context POI = beyond the higher-timeframe POI (wider stop, smaller size). Zone edge = tightest stop.", group = G_ENT)
 reqSB       = input.bool(false, "Only trade inside a silver bullet window", group = G_ENT)
+reqCrypto   = input.bool(false, "Only trade inside the crypto trading day (08:00-21:00 UTC)", group = G_ENT)
 slBuf       = input.float(0.1, "Stop buffer (ATR ×)", minval = 0.0, step = 0.05, group = G_ENT)
 minRR       = input.float(2.0, "Minimum reward : risk", minval = 0.5, step = 0.25, group = G_ENT)
 allowCtr    = input.bool(false, "Allow trades against HTF bias", group = G_ENT)
@@ -386,14 +392,16 @@ bool isIntra = timeframe.isintraday
 bool inAsia  = isIntra and not na(time(timeframe.period, asiaS, tz))
 bool inLon   = isIntra and not na(time(timeframe.period, lonS, tz))
 bool inNY    = isIntra and not na(time(timeframe.period, nyS, tz))
-bool inKZ    = inLon or inNY
+bool inPM    = isIntra and not na(time(timeframe.period, pmS, tz))
+bool inKZ    = inLon or inNY or (allowPM and inPM)
+bool inCrypto = isIntra and not na(time(timeframe.period, cryptoS, "UTC"))
 f_news(int t) => t > 0 and time >= t - newsPre * 60000 and time <= t + newsPost * 60000
 bool inNews  = f_news(newsT1) or f_news(newsT2) or f_news(newsT3)
 bgcolor(inNews ? color.new(color.red, 88) : na, title = "News no-trade window")
 bool inSB    = isIntra and (not na(time(timeframe.period, sbA, tz)) or not na(time(timeframe.period, sbB, tz)) or not na(time(timeframe.period, sbC, tz)))
 
 bgcolor(showKZ and inSB ? color.new(color.white, 88) : na, title = "Silver bullet window")
-bgcolor(showKZ and inLon ? color.new(colLon, 93) : showKZ and inNY ? color.new(colNY, 93) : showKZ and inAsia ? color.new(colAsia, 95) : na)
+bgcolor(showKZ and inLon ? color.new(colLon, 93) : showKZ and inNY ? color.new(colNY, 93) : showKZ and inPM ? color.new(colLiq, 94) : showKZ and inAsia ? color.new(colAsia, 95) : na)
 
 var float asiaHi = na
 var float asiaLo = na
@@ -423,11 +431,11 @@ if showJudas and isIntra and not inAsia and inKZ and not na(asiaLo)
     if not judasBullDone and low < asiaLo and close > asiaLo
         judasBull := true
         judasBullDone := true
-        label.new(bar_index, low, "Judas ↓", style = label.style_label_up, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny)
+        label.new(bar_index, low, "Judas ↓ " + (inLon ? "(London)" : "(NY)"), style = label.style_label_up, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny)
     if not judasBearDone and high > asiaHi and close < asiaHi
         judasBear := true
         judasBearDone := true
-        label.new(bar_index, high, "Judas ↑", style = label.style_label_down, color = color.new(colBear, 80), textcolor = colBear, size = size.tiny)
+        label.new(bar_index, high, "Judas ↑ " + (inLon ? "(London)" : "(NY)"), style = label.style_label_down, color = color.new(colBear, 80), textcolor = colBear, size = size.tiny)
 
 float dOpen = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_on)
 float wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
@@ -525,7 +533,10 @@ f_stack(int dir) =>
 
 f_grade(int dir) =>
     [st, tot] = f_stack(dir)
-    tot < 3 ? "B" : st == tot ? "A+" : st == tot - 1 ? "A" : "B"
+    string g = tot < 3 ? "B" : st == tot ? "A+" : st == tot - 1 ? "A" : "B"
+    if timeGrade and isIntra and not (inKZ or inSB or inPM)
+        g := g == "A+" ? "A" : "B"
+    g
 
 f_riskPct(int dir) =>
     (useGrades and f_grade(dir) == "A+") ? riskAPlus : riskPct
@@ -882,7 +893,7 @@ if tiltN > 0 and consecLoss >= tiltN and not na(lastLossBar) and bar_index - las
 bool tiltBlocked = tiltN > 0 and consecLoss >= tiltN
 
 // Timing / discipline gates: kill zone, silver bullet, news window, tilt guard.
-bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and not inNews and not tiltBlocked
+bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and (not reqCrypto or inCrypto) and not inNews and not tiltBlocked
 [stkLn, stkLt] = f_stack(1)
 [stkSn, stkSt] = f_stack(-1)
 bool stkL      = stkLn >= minStack
@@ -1086,7 +1097,7 @@ if showDash and barstate.islast
         planRR := pr
         planSize = math.abs(pe - ps) > 0 ? (acct * f_riskPct(dirC) / 100) / math.abs(pe - ps) : na
     bool rrOK = not na(planRR) and planRR >= minRR
-    string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "-")
+    string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inPM ? "NY afternoon" : inAsia ? "Asia" : "-")
 
     table.cell(dash, 0, 0, "Top-down checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
     table.cell(dash, 1, 0, syminfo.ticker + " | " + scaleMode, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
@@ -1131,4 +1142,6 @@ alertcondition(bearBrk and bearMSS, "TM bearish MSS", "Bearish market structure 
 alertcondition(sweepBull, "TM sell-side sweep", "Sell-side liquidity swept on {{ticker}} ({{interval}})")
 alertcondition(sweepBear, "TM buy-side sweep", "Buy-side liquidity swept on {{ticker}} ({{interval}})")
 alertcondition(inNews and not inNews[1], "TM news window starting", "News window starting on {{ticker}}: no new entries, manage open trades")
+alertcondition(inLon and not inLon[1], "TM London kill zone starting", "London kill zone starting on {{ticker}}")
+alertcondition(inNY and not inNY[1], "TM New York kill zone starting", "New York kill zone starting on {{ticker}}")
 alertcondition(judasBull or judasBear, "TM Judas swing", "Asian range Judas swing on {{ticker}} ({{interval}})")
