@@ -19,7 +19,7 @@ indicator("Trader Mayne Framework", shorttitle = "TM Frame", overlay = true,
 
 // ───────────────────────────── Inputs ─────────────────────────────
 G_VIEW = "Display"
-viewMode = input.string("Clean", "Chart view", options = ["Clean", "Full"], tooltip = "Clean: dashboard, dealing range, context POI, model entry zones, equal-high/low liquidity, meaningful sweeps and structure shifts, recent trade plans. Full: everything.", group = G_VIEW)
+viewMode = input.string("Signals", "Chart view", options = ["Signals", "Clean", "Full"], tooltip = "Signals: trade plans (entry, stop, target, size), signal markers, context POI, dealing range and dashboard only. Clean: adds model zones, equal-high/low liquidity, meaningful sweeps / structure shifts and previous day / week levels. Full: everything.", group = G_VIEW)
 cleanMinScore = input.int(5, "Clean view: also show order blocks / breakers scoring at least", minval = 0, maxval = 7, group = G_VIEW)
 
 G_STR = "Market structure"
@@ -174,7 +174,8 @@ colLon  = input.color(#2196f3, "London", group = G_COL)
 colNY   = input.color(#ffb300, "New York", group = G_COL)
 
 bool modelOn = entryModel == "5-minute model (FVG)"
-bool cleanView = viewMode == "Clean"
+bool cleanView = viewMode != "Full"
+bool sigView = viewMode == "Signals"
 bool useAsiaBox = showAsia and not cleanView
 bool showRanges = showHTFRange and not cleanView
 dashTxt = dashSize == "tiny" ? size.tiny : dashSize == "normal" ? size.normal : dashSize == "large" ? size.large : size.small
@@ -309,7 +310,7 @@ if not shDone and close > shLvl
     bullMSS := trend == -1
     bullAnchor := shBar
     shDone := true
-    if showStruct and (not cleanView or bullMSS or bodyBig)
+    if showStruct and not sigView and (not cleanView or bullMSS or bodyBig)
         color mc = bullMSS ? colMSS : colBull
         line.new(shBar, shLvl, bar_index, shLvl, color = mc, style = line.style_dashed)
         label.new(math.round(math.avg(shBar, bar_index)), shLvl, (bullMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
@@ -321,7 +322,7 @@ if not slDone and close < slLvl
     bearMSS := trend == 1
     bearAnchor := slBar
     slDone := true
-    if showStruct and (not cleanView or bearMSS or bodyBig)
+    if showStruct and not sigView and (not cleanView or bearMSS or bodyBig)
         color mc = bearMSS ? colMSS : colBear
         line.new(slBar, slLvl, bar_index, slLvl, color = mc, style = line.style_dashed)
         label.new(math.round(math.avg(slBar, bar_index)), slLvl, (bearMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
@@ -435,7 +436,7 @@ bgcolor(inNews ? color.new(color.red, 88) : na, title = "News no-trade window")
 bool inSB    = isIntra and (not na(time(timeframe.period, sbA, tz)) or not na(time(timeframe.period, sbB, tz)) or not na(time(timeframe.period, sbC, tz)))
 
 bgcolor(showKZ and not cleanView and inSB ? color.new(color.white, 88) : na, title = "Silver bullet window")
-bgcolor(showKZ and inLon ? color.new(colLon, 93) : showKZ and inNY ? color.new(colNY, 93) : showKZ and not cleanView and inPM ? color.new(colLiq, 94) : showKZ and not cleanView and inAsia ? color.new(colAsia, 95) : na)
+bgcolor(showKZ and not sigView and inLon ? color.new(colLon, 93) : showKZ and not sigView and inNY ? color.new(colNY, 93) : showKZ and not cleanView and inPM ? color.new(colLiq, 94) : showKZ and not cleanView and inAsia ? color.new(colAsia, 95) : na)
 
 var float asiaHi = na
 var float asiaLo = na
@@ -609,7 +610,7 @@ f_showZone(Zone z, bool star) =>
 // Fair value gaps are drawn once a qualifying 5-minute-model structure break claims them.
 f_addZone(float top, float bot, int dir, int kind, int score, int t0, float ext, bool star) =>
     Zone z = Zone.new(top = top, bot = bot, dir = dir, kind = kind, score = score, t0 = t0, cb = bar_index, ext = ext, used = false)
-    if not cleanView or (kind < 2 and score >= cleanMinScore)
+    if not cleanView or (not sigView and kind < 2 and score >= cleanMinScore)
         f_showZone(z, star)
     array.push(zones, z)
     while array.size(zones) > maxZones
@@ -764,11 +765,11 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string t
             array.push(tLabels, label.new(r, partLvl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = size.tiny))
     array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score) + "\n" + sizeTxt,
          style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = size.small))
-    while array.size(tBoxes) > 12
+    while array.size(tBoxes) > (sigView ? 6 : 12)
         box.delete(array.shift(tBoxes))
-    while array.size(tLines) > 20
+    while array.size(tLines) > (sigView ? 8 : 20)
         line.delete(array.shift(tLines))
-    while array.size(tLabels) > 30
+    while array.size(tLabels) > (sigView ? 10 : 30)
         label.delete(array.shift(tLabels))
     true
 
@@ -793,9 +794,9 @@ if not na(ph) or not na(pl)
                         if not na(q.ln)
                             line.set_width(q.ln, 2)
             line ln = na
-            if showLiq and (not cleanView or isEq)
+            if showLiq and not sigView and (not cleanView or isEq)
                 ln := line.new(bar_index - swingN, px, bar_index, px, extend = extend.right, color = color.new(colLiq, isEq ? 20 : 55), width = isEq ? 2 : 1, style = line.style_dotted)
-            if isEq and showLiq
+            if isEq and showLiq and not sigView
                 label.new(bar_index - swingN, px, side == 1 ? "EQH" : "EQL", style = side == 1 ? label.style_label_down : label.style_label_up, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny)
             array.push(liqs, Liq.new(px = px, side = side, bar = bar_index - swingN, ln = ln, eq = isEq, brk = na))
     while array.size(liqs) > maxLiq
@@ -844,7 +845,7 @@ if nLiq > 0
             else
                 sweepBull := true
                 lastSslSweep := bar_index
-            if showSweeps and (not cleanView or l.eq or inNews)
+            if showSweeps and not sigView and (not cleanView or l.eq or inNews)
                 label.new(bar_index, l.side == 1 ? high : low, (inNews ? "NEWS " : "") + (l.eq ? "EQ " : "") + how + (l.side == 1 ? " ↓" : " ↑"),
                      style = l.side == 1 ? label.style_label_down : label.style_label_up,
                      color = color.new(l.side == 1 ? colBear : colBull, 75), textcolor = l.side == 1 ? colBear : colBull, size = size.tiny)
@@ -939,10 +940,10 @@ if not na(closePos) and not noBiasDay
         dailyBias := -1
 
 float prevWMid = (prevWH + prevWL) / 2
-plot(showMap ? prevDH : na, "Previous day high", color = dHiSw ? color.new(colLiq, 85) : color.new(colBear, 40), style = plot.style_linebr)
-plot(showMap ? prevDL : na, "Previous day low", color = dLoSw ? color.new(colLiq, 85) : color.new(colBull, 40), style = plot.style_linebr)
-plot(showMap ? prevWH : na, "Previous week high", color = wHiSw ? color.new(colLiq, 80) : color.new(colBear, 20), linewidth = 2, style = plot.style_linebr)
-plot(showMap ? prevWL : na, "Previous week low", color = wLoSw ? color.new(colLiq, 80) : color.new(colBull, 20), linewidth = 2, style = plot.style_linebr)
+plot(showMap and not sigView ? prevDH : na, "Previous day high", color = dHiSw ? color.new(colLiq, 85) : color.new(colBear, 40), style = plot.style_linebr)
+plot(showMap and not sigView ? prevDL : na, "Previous day low", color = dLoSw ? color.new(colLiq, 85) : color.new(colBull, 40), style = plot.style_linebr)
+plot(showMap and not sigView ? prevWH : na, "Previous week high", color = wHiSw ? color.new(colLiq, 80) : color.new(colBear, 20), linewidth = 2, style = plot.style_linebr)
+plot(showMap and not sigView ? prevWL : na, "Previous week low", color = wLoSw ? color.new(colLiq, 80) : color.new(colBull, 20), linewidth = 2, style = plot.style_linebr)
 plot(showMap and not cleanView ? prevMH : na, "Previous month high", color = mHiSw ? color.new(colLiq, 75) : color.new(colBear, 0), linewidth = 3, style = plot.style_linebr)
 plot(showMap and not cleanView ? prevML : na, "Previous month low", color = mLoSw ? color.new(colLiq, 75) : color.new(colBull, 0), linewidth = 3, style = plot.style_linebr)
 plot(showMap and not cleanView ? prevWMid : na, "Previous week 50%", color = color.new(colMSS, 60), style = plot.style_linebr)

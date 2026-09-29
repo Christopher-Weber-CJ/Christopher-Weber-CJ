@@ -42,7 +42,12 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 
 ## Reading the chart (Display settings)
 
-The framework draws a lot, so *Chart view* defaults to **Clean**:
+The framework draws a lot, so *Chart view* has three levels and defaults to **Signals**:
+- **Signals:** only the trade plans (entry, stop, target, 2R and partial lines, size, grade), the long / short markers, the context-timeframe POI, the chart dealing range with its OTE zone, Judas / SMT / range-AMD markers, and the dashboard. Everything below is hidden.
+- **Clean** (the level described next) adds more context.
+- **Full** draws everything.
+
+**Clean** adds to Signals:
 - **Shown:** the dashboard, the chart dealing range (high, low, EQ and the OTE zone), the context-timeframe POI, the 5-minute-model entry zones (drawn once a qualifying structure break claims them), order blocks / breakers scoring at least 5, equal-high / equal-low liquidity lines, sweeps of those or during news, structure breaks that are reversals or have displacement, Judas / SMT / range-AMD markers, the previous day and week highs and lows, and the last few trade plans.
 - **Hidden until you switch to Full:** plain swing-liquidity lines, most sweep and structure labels, premium / discount shading, the sync and direction range lines, the month levels and previous-week midpoint, daily / weekly opens, Monday range, the Asia box, and the afternoon / silver bullet shading.
 - *Dashboard text size* makes the checklist larger. To clear the row of input values at the top-left of the pane, open the indicator's Settings, then Status line, and untick Inputs.
