@@ -1,10 +1,11 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-14: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-15: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
-// reversal vs continuation setups with H4/H1 confirmation, the 15-minute variant and the silver bullet window.
+// reversal vs continuation setups with H4/H1 confirmation, the 15-minute variant, the silver bullet window,
+// and the seven no-trade disqualifiers.
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -89,6 +90,17 @@ reqKZ       = input.bool(false, "Require kill zone", group = G_ENT)
 reqSweep    = input.bool(false, "Require a recent liquidity sweep", group = G_ENT)
 fvgEntries  = input.bool(false, "Allow FVG-only entries (system prefers OB / breaker)", group = G_ENT)
 
+G_DQ = "No-trade filters (episode 15)"
+minER     = input.float(0.10, "1. Bias clarity: minimum efficiency ratio on the direction timeframe (below = ranging, no trade)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Net move over 20 bars divided by total distance travelled. Near 0 = choppy / ranging. Set to 0 to disable.", group = G_DQ)
+missRun   = input.float(5.0, "5. No chasing: cancel a 5m-model FVG if price runs this many ATR away without a retest", minval = 1.0, step = 0.5, group = G_DQ)
+newsT1    = input.time(0, "6. News event 1 (0 = off)", group = G_DQ)
+newsT2    = input.time(0, "6. News event 2 (0 = off)", group = G_DQ)
+newsT3    = input.time(0, "6. News event 3 (0 = off)", group = G_DQ)
+newsPre   = input.int(60, "6. Stay out this many minutes before news", minval = 0, group = G_DQ)
+newsPost  = input.int(120, "6. Stay out this many minutes after news", minval = 0, group = G_DQ)
+tiltN     = input.int(0, "7. Tilt guard: pause after this many consecutive stopped-out signals (0 = off)", minval = 0, group = G_DQ)
+tiltCool  = input.int(50, "7. Tilt guard: pause length (bars)", minval = 1, group = G_DQ)
+
 G_DSH = "Dashboard"
 showDash = input.bool(true, "Show checklist dashboard", group = G_DSH)
 dashPos  = input.string(position.top_right, "Position", options = [position.top_right, position.middle_right, position.bottom_right, position.top_left, position.middle_left, position.bottom_left], group = G_DSH)
@@ -137,7 +149,9 @@ f_htf(float h, float l, float c, int majLen) =>
         mHi := mph
     if not na(mpl)
         mLo := mpl
-    [tr, mHi, mLo]
+    float path = ta.sum(math.abs(ta.change(c)), 20)
+    float eff = path > 0 ? math.abs(c - c[20]) / path : 0.0
+    [tr, mHi, mLo, eff]
 
 // Latest live points of interest on the context timeframe: order block (last opposite candle
 // before a structure break) or fair value gap, until price closes through it.
@@ -189,10 +203,10 @@ f_ctx(float o, float h, float l, float c) =>
         sB := na
     [bT, bB, sT, sB, tr]
 
-[dirTrend, dirHi, dirLo]     = request.security(syminfo.tickerid, dirTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
-[syncTrend, syncHi, syncLo]  = request.security(syminfo.tickerid, syncTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+[dirTrend, dirHi, dirLo, dirER]     = request.security(syminfo.tickerid, dirTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+[syncTrend, syncHi, syncLo, syncER]  = request.security(syminfo.tickerid, syncTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 [ctxBullTop, ctxBullBot, ctxBearTop, ctxBearBot, ctxTrend] = request.security(syminfo.tickerid, ctxTF, f_ctx(open[1], high[1], low[1], close[1]), lookahead = barmerge.lookahead_off)
-[setupTrend, setupHi, setupLo] = request.security(syminfo.tickerid, setupTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+[setupTrend, setupHi, setupLo, setupER] = request.security(syminfo.tickerid, setupTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 
 // ───────────────────────────── Core series ─────────────────────────────
 atr = ta.atr(atrLen)
@@ -275,7 +289,8 @@ float pdLo  = pdSource == "Sync TF range" and syncRangeOK ? syncLo : pdSource ==
 float pdMid = (pdHi + pdLo) / 2
 
 // Step 1: weekly gives direction. Daily in line = continuation; daily still against = reversal setup (needs H4 / H1 confirmation).
-int biasDir = useHTF ? ((dirTrend == syncTrend or allowRev) ? dirTrend : 0) : trend
+bool dirClear = not useHTF or dirER >= minER
+int biasDir = useHTF ? ((dirClear and (dirTrend == syncTrend or allowRev)) ? dirTrend : 0) : trend
 float lo20 = ta.lowest(low, 20)
 float hi20 = ta.highest(high, 20)
 
@@ -329,6 +344,9 @@ bool inAsia  = isIntra and not na(time(timeframe.period, asiaS, tz))
 bool inLon   = isIntra and not na(time(timeframe.period, lonS, tz))
 bool inNY    = isIntra and not na(time(timeframe.period, nyS, tz))
 bool inKZ    = inLon or inNY
+f_news(int t) => t > 0 and time >= t - newsPre * 60000 and time <= t + newsPost * 60000
+bool inNews  = f_news(newsT1) or f_news(newsT2) or f_news(newsT3)
+bgcolor(inNews ? color.new(color.red, 88) : na, title = "News no-trade window")
 bool inSB    = isIntra and (not na(time(timeframe.period, sbA, tz)) or not na(time(timeframe.period, sbB, tz)) or not na(time(timeframe.period, sbC, tz)))
 
 bgcolor(showKZ and inSB ? color.new(color.white, 88) : na, title = "Silver bullet window")
@@ -729,7 +747,20 @@ if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook 
                 fz.ext := legExt
 
 // ───────────────────────── Zone maintenance and setup signals ─────────────────────────
-bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB)
+var array<int>   trDir = array.new<int>()
+var array<float> trSl   = array.new<float>()
+var array<float> trTp   = array.new<float>()
+var int wins = 0
+var int losses = 0
+var int consecLoss = 0
+var int lastLossBar = na
+var int lastChase = na
+if tiltN > 0 and consecLoss >= tiltN and not na(lastLossBar) and bar_index - lastLossBar > tiltCool
+    consecLoss := 0
+bool tiltBlocked = tiltN > 0 and consecLoss >= tiltN
+
+// Timing / discipline gates: kill zone, silver bullet, news window, tilt guard.
+bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and not inNews and not tiltBlocked
 bool confL     = not reqConfirm or syncTrend == 1 or ctxTrend == 1 or setupTrend == 1
 bool confS     = not reqConfirm or syncTrend == -1 or ctxTrend == -1 or setupTrend == -1
 bool sweepOKL = not reqSweep or recentSsl
@@ -761,6 +792,9 @@ if nZ > 0
                 kill := true
             if z.kind == 2 and modelOn and not showFVG and not z.mod and bar_index - z.cb > 60
                 kill := true
+            if z.kind == 2 and z.mod and not z.used and bar_index > z.cb and ((z.dir == 1 and high > z.top + missRun * atr) or (z.dir == -1 and low < z.bot - missRun * atr))
+                kill := true
+                lastChase := bar_index
         bool modelZone = modelOn and z.kind == 2 and z.mod
         bool generalZone = not modelOn and z.score >= minScoreEnt and (z.kind < 2 or fvgEntries)
         if kill
@@ -771,13 +805,13 @@ if nZ > 0
             float trig = entryMode == "50% mean" ? mid : (z.dir == 1 ? z.top : z.bot)
             if z.dir == 1 and (allowCtr or biasDir == 1) and (not reqSync or trend == 1)
                 bool touched = low <= trig and close >= mid
-                bool locOK = modelZone or not reqPD or (not na(pdMid) and mid < pdMid)
+                bool locOK = not reqPD or (not na(pdMid) and mid < pdMid)
                 bool poiOK = modelZone or not reqPOI or (not na(ctxBullTop) and z.bot <= ctxBullTop and z.top >= ctxBullBot)
                 if touched and locOK and poiOK and confL and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
                     bestL := z
             if z.dir == -1 and (allowCtr or biasDir == -1) and (not reqSync or trend == -1)
                 bool touched = high >= trig and close <= mid
-                bool locOK = modelZone or not reqPD or (not na(pdMid) and mid > pdMid)
+                bool locOK = not reqPD or (not na(pdMid) and mid > pdMid)
                 bool poiOK = modelZone or not reqPOI or (not na(ctxBearTop) and z.top >= ctxBearBot and z.bot <= ctxBearTop)
                 if touched and locOK and poiOK and confS and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
                     bestS := z
@@ -815,11 +849,36 @@ if not na(bestS) and not longSig
         sigRR := rr
         f_drawTrade(-1, en, sl, tp, rr, bestS.score, (syncTrend == -1 ? "CONT" : "REV") + (inSB ? " SB" : ""))
 
+int nTr = array.size(trDir)
+if nTr > 0
+    for k = 1 to nTr
+        int i = nTr - k
+        int d = array.get(trDir, i)
+        float slv = array.get(trSl, i)
+        float tpv = array.get(trTp, i)
+        bool hitSl = d == 1 ? low <= slv : high >= slv
+        bool hitTp = d == 1 ? high >= tpv : low <= tpv
+        if hitSl or hitTp
+            if hitSl
+                losses += 1
+                consecLoss += 1
+                lastLossBar := bar_index
+            else
+                wins += 1
+                consecLoss := 0
+            array.remove(trDir, i)
+            array.remove(trSl, i)
+            array.remove(trTp, i)
+if longSig or shortSig
+    array.push(trDir, longSig ? 1 : -1)
+    array.push(trSl, sigStop)
+    array.push(trTp, sigTarget)
+
 plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, size = size.small, text = "L")
 plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.small, text = "S")
 
 // ───────────────────────────── Dashboard ─────────────────────────────
-var table dash = table.new(dashPos, 2, 11, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+var table dash = table.new(dashPos, 2, 13, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
 
 f_tick(bool ok) => ok ? "✓" : "✗"
 
@@ -852,7 +911,7 @@ if showDash and barstate.islast
     table.cell(dash, 0, 0, "Top-down checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
     table.cell(dash, 1, 0, syminfo.ticker, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
     table.cell(dash, 0, 1, "1a Direction (" + dirTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 1, (dirTrend == 1 ? "Bullish" : dirTrend == -1 ? "Bearish" : "Range") + " " + f_tick(dirTrend != 0), text_color = dirTrend == 1 ? colBull : dirTrend == -1 ? colBear : colLiq, text_size = size.small)
+    table.cell(dash, 1, 1, (not dirClear ? "Ranging" : dirTrend == 1 ? "Bullish" : dirTrend == -1 ? "Bearish" : "Range") + " " + f_tick(dirTrend != 0 and dirClear), text_color = not dirClear ? colLiq : dirTrend == 1 ? colBull : dirTrend == -1 ? colBear : colLiq, text_size = size.small)
     table.cell(dash, 0, 2, "1b Sync (" + syncTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 2, syncTxt + " " + f_tick(syncTFOK), text_color = syncTFOK ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 3, "2 Location in range", text_color = color.white, text_size = size.small, text_halign = text.align_left)
@@ -869,9 +928,15 @@ if showDash and barstate.islast
     table.cell(dash, 1, 8, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 9, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 9, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
-    bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK
-    table.cell(dash, 0, 10, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
-    table.cell(dash, 1, 10, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    bool chased = not na(lastChase) and bar_index - lastChase <= 30
+    string dq = dirC == 0 ? "1 No clear bias" : not locOKd ? "2 Wrong zone" : not rrOK ? "3 No target / under " + str.tostring(minRR, "#.#") + "R" : not modelOK ? "4 Model incomplete" : chased ? "5 Missed entry (no chase)" : inNews ? "6 News window" : tiltBlocked ? "7 Tilt guard" : "None"
+    bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK and not inNews and not tiltBlocked
+    table.cell(dash, 0, 10, "No-trade filter", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = size.small)
+    table.cell(dash, 0, 12, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 12, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")

@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.3, built from episodes 1-14 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.4, built from episodes 1-15 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -27,6 +27,7 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 12 | Four-step top-down process: weekly + daily direction, H4 context, H1 setup, M5 entry. Stop beyond the H4 POI, targets from the higher timeframes. | Direction (W) and sync (D) timeframes, context (H4) POIs plotted, zone must sit inside a context POI, stop beyond that POI, target = nearest equal high/low or higher-timeframe range extreme paying at least minRR. |
 | 13 | Five-minute model: zone tag, 5m structure break, displacement, FVG pullback entry, stop beyond the 5m swing (or the HTF zone), HTF targets, minimum 2R | Default entry model. See below. |
 | 14 | Reversal vs continuation setups, H4 / H1 confirmation before the model, 15-minute model = same model on a higher chart, silver bullet windows | Reversal / continuation labels and stop rule, confirmation gate, silver bullet windows. See below. |
+| 15 | Seven disqualifiers: no HTF bias, wrong zone, no target or under 2R, incomplete model, chasing, news, emotion | No-trade filters and a dashboard row naming the first disqualifier. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -54,17 +55,29 @@ No zone tag, no displacement, or under 2R means no signal. The dashboard shows w
 - The **15-minute model** is the same model: run the indicator on a 15m chart. The same works on 1h.
 - **Silver bullet:** the three windows (03:00-04:00, 10:00-11:00, 14:00-15:00 New York time) are shaded, and signals inside them are tagged `SB`. *Only trade inside a silver bullet window* makes them a filter. Turn on *Require a recent liquidity sweep* to match his "sweep, break, FVG" description.
 
+**No-trade filters (episode 15).** If any of his seven disqualifiers is active there is no signal, and the dashboard's *No-trade filter* row names the first one:
+
+| # | Disqualifier | How the indicator checks it |
+|---|---|---|
+| 1 | No clear HTF bias | Direction timeframe must have structure bias and an efficiency ratio above the minimum (ranging = no trade). Default 0.10 is my own guess, so tune it. |
+| 2 | Price in the wrong zone | Longs only below the range midpoint, shorts only above it. Applies to the 5m model too. |
+| 3 | No target, or under 2R | A target must exist and pay at least the minimum reward:risk. |
+| 4 | Model did not fully trigger | The five steps must complete in order. |
+| 5 | Chasing | A 5m-model FVG is cancelled if price runs 5 ATR away without a retest. Signals only fire on the retest bar. |
+| 6 | News | Pine cannot see an economic calendar. Enter up to three event times by hand; the window (60 min before, 120 after) is shaded red and blocks signals. |
+| 7 | Emotion | It cannot measure emotion. Instead, *Tilt guard* can pause signals after N consecutive stopped-out signals. The dashboard also counts the indicator's own signal wins and losses (stop assumed first if both are hit in one bar). |
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 15-25, not read yet)
+## Not yet implemented (episodes 16-25, not read yet)
 
-Episodes 15-25 are: when to walk away (the no-trade checklist), losing trades and win rate,
+Episodes 16-25 are: risk management (stops, profit-taking, RR), the scaling strategy,
 losing trades and win rate, scaling, news trading, advanced dealing ranges, kill zones, SMT divergence,
 liquidity trap and learning liquidity, and best-trade breakdown.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-14 were supplied by hand. Episodes 15-25 are **not** in the script yet.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-15 were supplied by hand. Episodes 16-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
 
