@@ -1,11 +1,12 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-15: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-16: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
 // reversal vs continuation setups with H4/H1 confirmation, the 15-minute variant, the silver bullet window,
-// and the seven no-trade disqualifiers.
+// the seven no-trade disqualifiers, and the risk framework (stop = invalidation, position sizing,
+// 2R exits with partials at internal liquidity, break-even win-rate math).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -89,6 +90,13 @@ reqPD       = input.bool(true, "Require zone in discount (longs) / premium (shor
 reqKZ       = input.bool(false, "Require kill zone", group = G_ENT)
 reqSweep    = input.bool(false, "Require a recent liquidity sweep", group = G_ENT)
 fvgEntries  = input.bool(false, "Allow FVG-only entries (system prefers OB / breaker)", group = G_ENT)
+
+G_RSK = "Risk and exits (episode 16)"
+acct     = input.float(100000, "Account size", minval = 1, group = G_RSK)
+riskPct  = input.float(1.0, "Risk per trade (%)  (his range: 0.5 - 2)", minval = 0.05, maxval = 10, step = 0.05, group = G_RSK)
+winAt    = input.string("2R", "Count a signal as a win at", options = ["2R", "Full target"], tooltip = "His journal closes the trade at 2R. Full target = the external liquidity target.", group = G_RSK)
+showPart = input.bool(true, "Show a partial-profit level at internal liquidity", group = G_RSK)
+partPct  = input.float(25, "Partial size (%) - he uses 25% or 33%", minval = 5, maxval = 50, group = G_RSK)
 
 G_DQ = "No-trade filters (episode 15)"
 minER     = input.float(0.10, "1. Bias clarity: minimum efficiency ratio on the direction timeframe (below = ranging, no trade)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Net move over 20 bars divided by total distance travelled. Near 0 = choppy / ranging. Set to 0 to disable.", group = G_DQ)
@@ -433,6 +441,7 @@ var array<Zone> zones = array.new<Zone>()
 var array<Zone> pend  = array.new<Zone>()
 var array<box>   tBoxes  = array.new<box>()
 var array<label> tLabels = array.new<label>()
+var array<line>  tLines  = array.new<line>()
 
 f_isOpp(int dir, int i) =>
     dir == 1 ? close[i] < open[i] : close[i] > open[i]
@@ -582,13 +591,31 @@ f_plan(Zone z) =>
 
 f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string tag) =>
     int r = bar_index + 15
+    float risk = math.abs(en - sl)
+    float t1 = en + dir * minRR * risk
+    float riskAmt = acct * riskPct / 100
+    float size = risk > 0 ? riskAmt / risk : na
     array.push(tBoxes, box.new(bar_index, math.max(en, sl), r, math.min(en, sl), border_color = na, bgcolor = color.new(colBear, 82)))
     array.push(tBoxes, box.new(bar_index, math.max(en, tp), r, math.min(en, tp), border_color = na, bgcolor = color.new(colBull, 82)))
-    array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score),
+    array.push(tLines, line.new(bar_index, t1, r, t1, color = colBull, style = line.style_dashed))
+    array.push(tLabels, label.new(r, t1, str.tostring(minRR, "#.#") + "R", style = label.style_label_left, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny))
+    if showPart and array.size(liqs) > 0
+        float pl = na
+        for k = 0 to array.size(liqs) - 1
+            Liq q = array.get(liqs, k)
+            if q.side == dir and (dir == 1 ? (q.px > en and q.px < t1) : (q.px < en and q.px > t1))
+                if na(pl) or math.abs(q.px - en) < math.abs(pl - en)
+                    pl := q.px
+        if not na(pl)
+            array.push(tLines, line.new(bar_index, pl, r, pl, color = colMSS, style = line.style_dotted))
+            array.push(tLabels, label.new(r, pl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = size.tiny))
+    array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score) + "\nsize " + str.tostring(size, "#.####") + " (risk " + str.tostring(riskAmt, "#") + ")",
          style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = size.small))
     while array.size(tBoxes) > 12
         box.delete(array.shift(tBoxes))
-    while array.size(tLabels) > 6
+    while array.size(tLines) > 12
+        line.delete(array.shift(tLines))
+    while array.size(tLabels) > 24
         label.delete(array.shift(tLabels))
     true
 
@@ -872,13 +899,13 @@ if nTr > 0
 if longSig or shortSig
     array.push(trDir, longSig ? 1 : -1)
     array.push(trSl, sigStop)
-    array.push(trTp, sigTarget)
+    array.push(trTp, winAt == "2R" ? sigEntry + (longSig ? 1 : -1) * minRR * math.abs(sigEntry - sigStop) : sigTarget)
 
 plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, size = size.small, text = "L")
 plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.small, text = "S")
 
 // ───────────────────────────── Dashboard ─────────────────────────────
-var table dash = table.new(dashPos, 2, 13, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+var table dash = table.new(dashPos, 2, 14, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
 
 f_tick(bool ok) => ok ? "✓" : "✗"
 
@@ -902,9 +929,11 @@ if showDash and barstate.islast
                 bz := zz
     bool modelOK = not na(bz) and trend == dirC
     float planRR = na
+    float planSize = na
     if not na(bz)
         [pe, ps, pt, pr] = f_plan(bz)
         planRR := pr
+        planSize = math.abs(pe - ps) > 0 ? (acct * riskPct / 100) / math.abs(pe - ps) : na
     bool rrOK = not na(planRR) and planRR >= minRR
     string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "-")
 
@@ -925,7 +954,7 @@ if showDash and barstate.islast
     table.cell(dash, 0, 7, modelOn ? "4 MSB + disp + FVG" : "4 Chart MSB + zone", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 7, (na(bz) ? "No zone" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 8, "Reward : risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 8, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 1, 8, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R, break-even " + str.tostring(100 / (1 + planRR), "#") + "%") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 9, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 9, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
     bool chased = not na(lastChase) and bar_index - lastChase <= 30
@@ -935,8 +964,10 @@ if showDash and barstate.islast
     table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = size.small)
-    table.cell(dash, 0, 12, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
-    table.cell(dash, 1, 12, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 0, 12, "Size at " + str.tostring(riskPct, "#.##") + "% risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * riskPct / 100, "#") + ")", text_color = color.white, text_size = size.small)
+    table.cell(dash, 0, 13, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 13, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")

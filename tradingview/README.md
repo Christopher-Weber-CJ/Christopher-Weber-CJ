@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.4, built from episodes 1-15 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.5, built from episodes 1-16 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -28,6 +28,7 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 13 | Five-minute model: zone tag, 5m structure break, displacement, FVG pullback entry, stop beyond the 5m swing (or the HTF zone), HTF targets, minimum 2R | Default entry model. See below. |
 | 14 | Reversal vs continuation setups, H4 / H1 confirmation before the model, 15-minute model = same model on a higher chart, silver bullet windows | Reversal / continuation labels and stop rule, confirmation gate, silver bullet windows. See below. |
 | 15 | Seven disqualifiers: no HTF bias, wrong zone, no target or under 2R, incomplete model, chasing, news, emotion | No-trade filters and a dashboard row naming the first disqualifier. See below. |
+| 16 | Stop = invalidation, hard stop that never widens, position size from the stop, TP from internal / external liquidity, partials in 25% or 1/3, 2:1 minimum, break-even win-rate math | Risk and exits inputs, position size on every signal, 2R and partial levels. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -67,17 +68,26 @@ No zone tag, no displacement, or under 2R means no signal. The dashboard shows w
 | 6 | News | Pine cannot see an economic calendar. Enter up to three event times by hand; the window (60 min before, 120 after) is shaded red and blocks signals. |
 | 7 | Emotion | It cannot measure emotion. Instead, *Tilt guard* can pause signals after N consecutive stopped-out signals. The dashboard also counts the indicator's own signal wins and losses (stop assumed first if both are hit in one bar). |
 
+**Risk and exits (episode 16).** Enter your account size and risk % (his range is 0.5-2%).
+- **Stop:** the stop stays at the invalidation point (the chart swing for continuations, the context POI for reversals), plus a small ATR buffer so it is not on the exact tick.
+- **Position size** = risk % × account ÷ |entry − stop|. It is written on each signal label and on the dashboard. Leverage and margin are not part of it. Units are coins or contracts, so check the contract size for futures / forex.
+- **Exits:** each signal draws the stop, the external target, a dashed **2R** line, and, if one exists between entry and 2R, a **partial** level at the nearest internal liquidity (default 25%). His mechanical default is to close everything at 2R and leave partials and trailing for later.
+- **Break-even win rate** for the current reward:risk is on the dashboard (2R needs 33%, 3R needs 25%).
+- Nothing drags the target or the stop to force 2R. If the chart's own levels do not pay 2R, there is no signal.
+- Not enforceable by an indicator, so follow them yourself: place the stop as a hard order at entry, never widen it, do not move it to break even too early, and do not take profit just because the trade is green.
+- The dashboard's signal win / loss count now counts a win at 2R by default (*Count a signal as a win at*).
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 16-25, not read yet)
+## Not yet implemented (episodes 17-25, not read yet)
 
-Episodes 16-25 are: risk management (stops, profit-taking, RR), the scaling strategy,
+Episodes 17-25 are: the scaling strategy,
 news trading, advanced dealing ranges, kill zones, SMT divergence,
 liquidity trap and learning liquidity, best-trade breakdown, and trading psychology.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-15 were supplied by hand. Episodes 16-25 are **not** in the script yet.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-16 were supplied by hand. Episodes 17-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
 
