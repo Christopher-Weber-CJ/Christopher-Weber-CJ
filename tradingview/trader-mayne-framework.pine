@@ -1,0 +1,702 @@
+//@version=6
+// Trader Mayne "Whiteboard Series" framework.
+// Built from episodes 1-11: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows.
+// Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
+indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
+     max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ───────────────────────────── Inputs ─────────────────────────────
+G_STR = "Market structure"
+swingN     = input.int(1, "Swing candles each side (1 = three-candle swing)", minval = 1, maxval = 5, group = G_STR)
+majorN     = input.int(8, "Major swing length (dealing range)", minval = 2, maxval = 50, group = G_STR)
+atrLen     = input.int(14, "ATR length", minval = 1, group = G_STR)
+dispMult   = input.float(1.2, "Displacement: candle body ≥ ATR ×", minval = 0.1, step = 0.1, group = G_STR)
+showStruct = input.bool(true, "Show MSB / MSS", group = G_STR)
+
+G_HTF = "Higher-timeframe bias"
+useHTF       = input.bool(true, "Use higher-timeframe bias", group = G_HTF)
+htf          = input.timeframe("D", "Bias timeframe (must be above chart timeframe)", group = G_HTF)
+htfMajor     = input.int(5, "HTF major swing length", minval = 2, maxval = 30, group = G_HTF)
+pdSource     = input.string("HTF range", "Premium / discount source", options = ["HTF range", "Chart range"], group = G_HTF)
+showHTFRange = input.bool(true, "Plot HTF dealing range", group = G_HTF)
+
+G_RNG = "Dealing range / OTE"
+showRange = input.bool(true, "Show chart dealing range (high, low, EQ)", group = G_RNG)
+showPD    = input.bool(true, "Shade premium / discount", group = G_RNG)
+showOTE   = input.bool(true, "Show OTE zone", group = G_RNG)
+oteLo     = input.float(0.62, "OTE start (0.618 → 0.62)", minval = 0.5, maxval = 0.9, step = 0.005, group = G_RNG)
+oteHi     = input.float(0.79, "OTE end (0.786 → 0.79)", minval = 0.5, maxval = 0.95, step = 0.005, group = G_RNG)
+sweetSpot = input.float(0.705, "Sweet spot", minval = 0.5, maxval = 0.95, step = 0.005, group = G_RNG)
+
+G_POI = "Points of interest (OB / breaker / FVG)"
+OBM_LAST   = "Last opposite candle before impulse"
+OBM_EXTREME = "Candle at leg extreme"
+showOB   = input.bool(true, "Order blocks", group = G_POI)
+showBrk  = input.bool(true, "Breaker blocks (failed OBs)", group = G_POI)
+showFVG  = input.bool(true, "Fair value gaps", group = G_POI)
+obMode   = input.string(OBM_LAST, "Order block candle", options = [OBM_LAST, OBM_EXTREME], group = G_POI)
+minShow  = input.int(2, "Minimum quality score to draw (0-7)", minval = 0, maxval = 7, group = G_POI)
+fvgMin   = input.float(0.3, "Minimum FVG size (ATR ×)", minval = 0.0, step = 0.1, group = G_POI)
+maxZones = input.int(14, "Max zones on chart", minval = 2, maxval = 60, group = G_POI)
+lifeBars = input.int(600, "Zone lifespan (bars)", minval = 50, maxval = 5000, group = G_POI)
+
+G_LIQ = "Liquidity"
+showLiq    = input.bool(true, "Draw resting liquidity (swing highs / lows)", group = G_LIQ)
+showSweeps = input.bool(true, "Mark sweeps (SFP / break-and-close)", group = G_LIQ)
+eqTol      = input.float(0.1, "Equal highs/lows tolerance (ATR ×)", minval = 0.0, step = 0.05, group = G_LIQ)
+maxLiq     = input.int(16, "Max unswept levels tracked", minval = 4, maxval = 60, group = G_LIQ)
+sweepLook  = input.int(30, "A sweep counts as 'recent' for (bars)", minval = 3, maxval = 300, group = G_LIQ)
+
+G_SES = "Sessions (intraday charts)"
+showKZ     = input.bool(true, "Shade sessions", group = G_SES)
+tz         = input.string("America/New_York", "Session timezone", group = G_SES)
+asiaS      = input.session("2000-0000", "Asia (accumulation)", group = G_SES)
+lonS       = input.session("0200-0500", "London kill zone", group = G_SES)
+nyS        = input.session("0700-1000", "New York kill zone", group = G_SES)
+showAsia   = input.bool(true, "Show Asian range", group = G_SES)
+showJudas  = input.bool(true, "Mark Judas swings (Asian range sweep + reclaim)", group = G_SES)
+showOpens  = input.bool(true, "Plot daily / weekly open", group = G_SES)
+showMonday = input.bool(true, "Plot Monday high / low", group = G_SES)
+
+G_ENT = "Entry model"
+enableSig   = input.bool(true, "Enable setup signals", group = G_ENT)
+minScoreEnt = input.int(3, "Minimum zone score to trade", minval = 0, maxval = 7, group = G_ENT)
+entryMode   = input.string("Zone edge", "Entry at", options = ["Zone edge", "50% mean", "Bar close"], group = G_ENT)
+stopMode    = input.string("Zone extreme", "Stop beyond", options = ["Zone edge", "Zone extreme"], tooltip = "Zone extreme = the sweep / leg extreme behind the zone (safer). Zone edge = tightest stop, best RR.", group = G_ENT)
+slBuf       = input.float(0.1, "Stop buffer (ATR ×)", minval = 0.0, step = 0.05, group = G_ENT)
+minRR       = input.float(2.0, "Minimum reward : risk", minval = 0.5, step = 0.25, group = G_ENT)
+allowCtr    = input.bool(false, "Allow trades against HTF bias", group = G_ENT)
+reqSync     = input.bool(true, "Require chart structure to be synced with bias", group = G_ENT)
+reqPD       = input.bool(true, "Require zone in discount (longs) / premium (shorts)", group = G_ENT)
+reqKZ       = input.bool(false, "Require kill zone", group = G_ENT)
+reqSweep    = input.bool(false, "Require a recent liquidity sweep", group = G_ENT)
+fvgEntries  = input.bool(false, "Allow FVG-only entries (system prefers OB / breaker)", group = G_ENT)
+
+G_DSH = "Dashboard"
+showDash = input.bool(true, "Show checklist dashboard", group = G_DSH)
+dashPos  = input.string(position.top_right, "Position", options = [position.top_right, position.middle_right, position.bottom_right, position.top_left, position.middle_left, position.bottom_left], group = G_DSH)
+
+G_COL = "Colors"
+colBull = input.color(#26a69a, "Bullish", group = G_COL)
+colBear = input.color(#ef5350, "Bearish", group = G_COL)
+colMSS  = input.color(#ff9800, "MSS", group = G_COL)
+colBrkL = input.color(#00bcd4, "Bullish breaker", group = G_COL)
+colBrkS = input.color(#ab47bc, "Bearish breaker", group = G_COL)
+colLiq  = input.color(#b2b5be, "Liquidity", group = G_COL)
+colAsia = input.color(#9c27b0, "Asia", group = G_COL)
+colLon  = input.color(#2196f3, "London", group = G_COL)
+colNY   = input.color(#ffb300, "New York", group = G_COL)
+
+// ───────────────────── Higher-timeframe structure ─────────────────────
+// Runs inside request.security on series shifted by one bar, so the HTF values never use the
+// still-forming HTF candle and do not repaint.
+f_htf(float h, float l, float c, int majLen) =>
+    float sph = (h[1] > h[2] and h[1] > h[0]) ? h[1] : na
+    float spl = (l[1] < l[2] and l[1] < l[0]) ? l[1] : na
+    var float sh = na
+    var float sl = na
+    var bool shDone = true
+    var bool slDone = true
+    var int tr = 0
+    if not na(sph)
+        sh := sph
+        shDone := false
+    if not na(spl)
+        sl := spl
+        slDone := false
+    if not shDone and c > sh
+        shDone := true
+        tr := 1
+    if not slDone and c < sl
+        slDone := true
+        tr := -1
+    float mph = ta.pivothigh(h, majLen, majLen)
+    float mpl = ta.pivotlow(l, majLen, majLen)
+    var float mHi = na
+    var float mLo = na
+    if not na(mph)
+        mHi := mph
+    if not na(mpl)
+        mLo := mpl
+    [tr, mHi, mLo]
+
+[htfTrend, htfHi, htfLo] = request.security(syminfo.tickerid, htf, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+
+// ───────────────────────────── Core series ─────────────────────────────
+atr = ta.atr(atrLen)
+bool bodyBig = math.abs(close - open) >= dispMult * atr
+
+// ───────────────────── Chart market structure (3-candle swings) ─────────────────────
+float ph  = ta.pivothigh(high, swingN, swingN)
+float pl  = ta.pivotlow(low, swingN, swingN)
+float mph = ta.pivothigh(high, majorN, majorN)
+float mpl = ta.pivotlow(low, majorN, majorN)
+
+var float shLvl = na
+var int   shBar = na
+var bool  shDone = true
+var float slLvl = na
+var int   slBar = na
+var bool  slDone = true
+var int   trend = 0
+
+bool bullBrk = false
+bool bearBrk = false
+bool bullMSS = false
+bool bearMSS = false
+int  bullAnchor = na
+int  bearAnchor = na
+
+if not na(ph)
+    shLvl := ph
+    shBar := bar_index - swingN
+    shDone := false
+if not na(pl)
+    slLvl := pl
+    slBar := bar_index - swingN
+    slDone := false
+
+if not shDone and close > shLvl
+    bullBrk := true
+    bullMSS := trend == -1
+    bullAnchor := shBar
+    shDone := true
+    if showStruct
+        color mc = bullMSS ? colMSS : colBull
+        line.new(shBar, shLvl, bar_index, shLvl, color = mc, style = line.style_dashed)
+        label.new(math.round(math.avg(shBar, bar_index)), shLvl, (bullMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
+             style = label.style_label_down, color = color.new(mc, 85), textcolor = mc, size = size.tiny)
+    trend := 1
+
+if not slDone and close < slLvl
+    bearBrk := true
+    bearMSS := trend == 1
+    bearAnchor := slBar
+    slDone := true
+    if showStruct
+        color mc = bearMSS ? colMSS : colBear
+        line.new(slBar, slLvl, bar_index, slLvl, color = mc, style = line.style_dashed)
+        label.new(math.round(math.avg(slBar, bar_index)), slLvl, (bearMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
+             style = label.style_label_up, color = color.new(mc, 85), textcolor = mc, size = size.tiny)
+    trend := -1
+
+// ───────────────────────────── Dealing range ─────────────────────────────
+var float rHi = na
+var float rLo = na
+var int   rHiBar = na
+var int   rLoBar = na
+bool rangeChanged = false
+if not na(mph)
+    rHi := mph
+    rHiBar := bar_index - majorN
+    rangeChanged := true
+if not na(mpl)
+    rLo := mpl
+    rLoBar := bar_index - majorN
+    rangeChanged := true
+
+bool chartRangeOK = not na(rHi) and not na(rLo) and rHi > rLo
+bool htfRangeOK   = useHTF and not na(htfHi) and not na(htfLo) and htfHi > htfLo
+bool useHtfPD     = pdSource == "HTF range" and htfRangeOK
+float pdHi  = useHtfPD ? htfHi : (chartRangeOK ? rHi : na)
+float pdLo  = useHtfPD ? htfLo : (chartRangeOK ? rLo : na)
+float pdMid = (pdHi + pdLo) / 2
+
+// External range liquidity = the far end of the dealing range (HTF first, chart as fallback).
+float tgtHi = (htfRangeOK and htfHi > close) ? htfHi : (chartRangeOK ? rHi : na)
+float tgtLo = (htfRangeOK and htfLo < close) ? htfLo : (chartRangeOK ? rLo : na)
+
+int biasDir = useHTF ? htfTrend : trend
+
+var line rngHi = na
+var line rngLo = na
+var line rngEq = na
+var line rngSweet = na
+var box  bxPrem = na
+var box  bxDisc = na
+var box  bxOte = na
+if showRange and rangeChanged and chartRangeOK
+    line.delete(rngHi)
+    line.delete(rngLo)
+    line.delete(rngEq)
+    line.delete(rngSweet)
+    box.delete(bxPrem)
+    box.delete(bxDisc)
+    box.delete(bxOte)
+    int x0 = math.min(rHiBar, rLoBar)
+    float eq = (rHi + rLo) / 2
+    float rg = rHi - rLo
+    bool bullLeg = rLoBar < rHiBar
+    rngHi := line.new(x0, rHi, bar_index, rHi, extend = extend.right, color = color.new(colBear, 30), width = 1)
+    rngLo := line.new(x0, rLo, bar_index, rLo, extend = extend.right, color = color.new(colBull, 30), width = 1)
+    rngEq := line.new(x0, eq, bar_index, eq, extend = extend.right, color = color.new(colLiq, 20), style = line.style_dashed)
+    if showPD
+        bxPrem := box.new(x0, rHi, bar_index, eq, border_color = na, bgcolor = color.new(colBear, 93), extend = extend.right)
+        bxDisc := box.new(x0, eq, bar_index, rLo, border_color = na, bgcolor = color.new(colBull, 93), extend = extend.right)
+    if showOTE
+        float o1 = bullLeg ? rHi - rg * oteLo : rLo + rg * oteLo
+        float o2 = bullLeg ? rHi - rg * oteHi : rLo + rg * oteHi
+        float sp = bullLeg ? rHi - rg * sweetSpot : rLo + rg * sweetSpot
+        bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE", text_size = size.tiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
+        rngSweet := line.new(x0, sp, bar_index, sp, extend = extend.right, color = color.new(colMSS, 40), style = line.style_dotted)
+
+plot(showHTFRange and htfRangeOK ? htfHi : na, "HTF range high", color = color.new(colBear, 50), style = plot.style_linebr)
+plot(showHTFRange and htfRangeOK ? htfLo : na, "HTF range low", color = color.new(colBull, 50), style = plot.style_linebr)
+plot(showHTFRange and htfRangeOK ? (htfHi + htfLo) / 2 : na, "HTF equilibrium", color = color.new(colLiq, 50), style = plot.style_linebr)
+
+// ───────────────────────────── Sessions ─────────────────────────────
+bool isIntra = timeframe.isintraday
+bool inAsia  = isIntra and not na(time(timeframe.period, asiaS, tz))
+bool inLon   = isIntra and not na(time(timeframe.period, lonS, tz))
+bool inNY    = isIntra and not na(time(timeframe.period, nyS, tz))
+bool inKZ    = inLon or inNY
+
+bgcolor(showKZ and inLon ? color.new(colLon, 93) : showKZ and inNY ? color.new(colNY, 93) : showKZ and inAsia ? color.new(colAsia, 95) : na)
+
+var float asiaHi = na
+var float asiaLo = na
+var box   asiaBx = na
+bool newAsia = inAsia and not inAsia[1]
+if newAsia
+    asiaHi := high
+    asiaLo := low
+    if showAsia
+        asiaBx := box.new(bar_index, high, bar_index, low, border_color = color.new(colAsia, 40), bgcolor = color.new(colAsia, 90), text = "Asia", text_size = size.tiny, text_color = color.new(colAsia, 20), text_halign = text.align_left)
+else if inAsia
+    asiaHi := math.max(asiaHi, high)
+    asiaLo := math.min(asiaLo, low)
+if showAsia and not na(asiaBx) and (inAsia or inKZ)
+    box.set_top(asiaBx, asiaHi)
+    box.set_bottom(asiaBx, asiaLo)
+    box.set_right(asiaBx, bar_index)
+
+var bool judasBullDone = false
+var bool judasBearDone = false
+if newAsia
+    judasBullDone := false
+    judasBearDone := false
+bool judasBull = false
+bool judasBear = false
+if showJudas and isIntra and not inAsia and inKZ and not na(asiaLo)
+    if not judasBullDone and low < asiaLo and close > asiaLo
+        judasBull := true
+        judasBullDone := true
+        label.new(bar_index, low, "Judas ↓", style = label.style_label_up, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny)
+    if not judasBearDone and high > asiaHi and close < asiaHi
+        judasBear := true
+        judasBearDone := true
+        label.new(bar_index, high, "Judas ↑", style = label.style_label_down, color = color.new(colBear, 80), textcolor = colBear, size = size.tiny)
+
+float dOpen = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_on)
+float wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
+plot(showOpens ? dOpen : na, "Daily open", color = color.new(colNY, 20), style = plot.style_linebr)
+plot(showOpens ? wOpen : na, "Weekly open", color = color.new(colLon, 20), style = plot.style_linebr)
+
+int  dow   = dayofweek(time, tz)
+bool isMon = dow == dayofweek.monday
+var float monHi = na
+var float monLo = na
+if isMon
+    if not isMon[1]
+        monHi := high
+        monLo := low
+    else
+        monHi := math.max(monHi, high)
+        monLo := math.min(monLo, low)
+plot(showMonday and not isMon ? monHi : na, "Monday high", color = color.new(colLiq, 30), style = plot.style_linebr)
+plot(showMonday and not isMon ? monLo : na, "Monday low", color = color.new(colLiq, 30), style = plot.style_linebr)
+
+// ───────────────────────── Zones: types and helpers ─────────────────────────
+type Zone
+    float top
+    float bot
+    int   dir      // 1 = supports longs, -1 = supports shorts
+    int   kind     // 0 order block, 1 breaker, 2 fair value gap
+    int   score
+    int   t0       // left-most bar of the zone
+    int   cb       // bar the zone was created on
+    float ext      // sweep / leg extreme behind the zone (stop reference)
+    bool  used
+    box   bx
+    line  mid
+
+var array<Zone> zones = array.new<Zone>()
+var array<Zone> pend  = array.new<Zone>()
+var array<box>   tBoxes  = array.new<box>()
+var array<label> tLabels = array.new<label>()
+
+f_isOpp(int dir, int i) =>
+    dir == 1 ? close[i] < open[i] : close[i] > open[i]
+
+// 0-2 points: zone on the correct side of equilibrium, plus zone inside the OTE band.
+f_loc(int dir, float mid) =>
+    int s = 0
+    if not na(pdHi) and not na(pdLo) and pdHi > pdLo
+        float rng = pdHi - pdLo
+        if (dir == 1 and mid < pdMid) or (dir == -1 and mid > pdMid)
+            s += 1
+        float ret = dir == 1 ? (pdHi - mid) / rng : (mid - pdLo) / rng
+        if ret >= oteLo and ret <= oteHi
+            s += 1
+    s
+
+f_removeZone(Zone z) =>
+    box.delete(z.bx)
+    line.delete(z.mid)
+    true
+
+f_addZone(float top, float bot, int dir, int kind, int score, int t0, float ext, bool star) =>
+    color base = kind == 0 ? (dir == 1 ? colBull : colBear) : kind == 1 ? (dir == 1 ? colBrkL : colBrkS) : (dir == 1 ? colBull : colBear)
+    string nm = (dir == 1 ? "Bull " : "Bear ") + (kind == 0 ? "OB" : kind == 1 ? "BRK" : "FVG") + " " + str.tostring(score) + (star ? "★" : "")
+    float mid = (top + bot) / 2
+    box bx = box.new(t0, top, bar_index + 1, bot, border_color = color.new(base, 30), border_style = kind == 2 ? line.style_dotted : line.style_solid,
+         bgcolor = color.new(base, kind == 2 ? 92 : 84), extend = extend.right, text = nm, text_size = size.tiny, text_color = color.new(base, 10), text_halign = text.align_right)
+    line ln = line.new(t0, mid, bar_index + 1, mid, extend = extend.right, color = color.new(base, 40), style = line.style_dotted)
+    array.push(zones, Zone.new(top = top, bot = bot, dir = dir, kind = kind, score = score, t0 = t0, cb = bar_index, ext = ext, used = false, bx = bx, mid = ln))
+    while array.size(zones) > maxZones
+        f_removeZone(array.shift(zones))
+    true
+
+// Order block for a structure break in direction `dir`. anchorBar = bar of the swing that was broken.
+f_createOB(int dir, int anchorBar) =>
+    int span = math.min(bar_index - anchorBar, 400)
+    float ext = dir == 1 ? low : high
+    int o = 0
+    for i = 0 to span
+        if dir == 1 and low[i] < ext
+            ext := low[i]
+            o := i
+        else if dir == -1 and high[i] > ext
+            ext := high[i]
+            o := i
+    int c = na
+    if obMode == OBM_LAST and o >= 1
+        for i = 1 to o
+            if f_isOpp(dir, i)
+                c := i
+                break
+    if na(c)
+        for i = o to o + 3
+            if bar_index - i >= 0 and f_isOpp(dir, i)
+                c := i
+                break
+    if na(c)
+        c := o
+    int cEnd = c
+    while cEnd - c < 2 and bar_index - (cEnd + 1) >= 0 and f_isOpp(dir, cEnd + 1)
+        cEnd += 1
+    float zTop = high[c]
+    float zBot = low[c]
+    for j = c to cEnd
+        zTop := math.max(zTop, high[j])
+        zBot := math.min(zBot, low[j])
+    float mid = (zTop + zBot) / 2
+
+    float need = dispMult * atr
+    bool dispOK = false
+    for i = 0 to 2
+        if (dir == 1 and close[i] - open[i] >= need) or (dir == -1 and open[i] - close[i] >= need)
+            dispOK := true
+    bool bigCandle = (zTop - zBot) >= 0.7 * atr
+
+    bool liq = false
+    int lb = math.min(15, bar_index - o - 1)
+    if lb >= 1
+        float pr = dir == 1 ? low[o + 1] : high[o + 1]
+        for k = o + 1 to o + lb
+            pr := dir == 1 ? math.min(pr, low[k]) : math.max(pr, high[k])
+        liq := dir == 1 ? ext < pr : ext > pr
+
+    bool fvgMade = false
+    bool overlap = false
+    if array.size(zones) > 0
+        for k = 0 to array.size(zones) - 1
+            Zone fz = array.get(zones, k)
+            if fz.kind == 2 and fz.dir == dir and fz.cb >= bar_index - o - 1
+                fvgMade := true
+                if fz.top >= zBot and fz.bot <= zTop
+                    overlap := true
+
+    int score = (dispOK ? 1 : 0) + (fvgMade ? 1 : 0) + (liq ? 1 : 0) + (bigCandle ? 1 : 0) + f_loc(dir, mid) + (overlap ? 1 : 0)
+    if showOB and score >= minShow
+        f_addZone(zTop, zBot, dir, 0, score, bar_index - cEnd, ext, overlap)
+    true
+
+// Entry, stop, target and reward:risk for a zone.
+f_plan(Zone z) =>
+    float mid = (z.top + z.bot) / 2
+    float entry = entryMode == "Zone edge" ? (z.dir == 1 ? z.top : z.bot) : entryMode == "50% mean" ? mid : close
+    float buf = slBuf * atr
+    float sl = z.dir == 1 ? (stopMode == "Zone extreme" ? math.min(z.ext, z.bot) : z.bot) - buf : (stopMode == "Zone extreme" ? math.max(z.ext, z.top) : z.top) + buf
+    float tp = z.dir == 1 ? ((not na(tgtHi) and tgtHi > entry) ? tgtHi : na) : ((not na(tgtLo) and tgtLo < entry) ? tgtLo : na)
+    bool valid = not na(tp) and (z.dir == 1 ? entry > sl : entry < sl)
+    float rr = valid ? math.abs(tp - entry) / math.abs(entry - sl) : na
+    [entry, sl, tp, rr]
+
+f_drawTrade(int dir, float en, float sl, float tp, float rr, int score) =>
+    int r = bar_index + 15
+    array.push(tBoxes, box.new(bar_index, math.max(en, sl), r, math.min(en, sl), border_color = na, bgcolor = color.new(colBear, 82)))
+    array.push(tBoxes, box.new(bar_index, math.max(en, tp), r, math.min(en, tp), border_color = na, bgcolor = color.new(colBull, 82)))
+    array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + "RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score),
+         style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = size.small))
+    while array.size(tBoxes) > 12
+        box.delete(array.shift(tBoxes))
+    while array.size(tLabels) > 6
+        label.delete(array.shift(tLabels))
+    true
+
+// ───────────────────────────── Liquidity ─────────────────────────────
+type Liq
+    float px
+    int   side     // 1 = buy-side (above highs), -1 = sell-side (below lows)
+    int   bar
+    line  ln
+    bool  eq
+    int   brk
+
+var array<Liq> liqs = array.new<Liq>()
+var int lastSslSweep = na
+var int lastBslSweep = na
+bool sweepBull = false
+bool sweepBear = false
+
+if not na(ph) or not na(pl)
+    for s = 0 to 1
+        float px = s == 0 ? ph : pl
+        int side = s == 0 ? 1 : -1
+        if not na(px)
+            bool isEq = false
+            if array.size(liqs) > 0
+                for k = 0 to array.size(liqs) - 1
+                    Liq q = array.get(liqs, k)
+                    if q.side == side and math.abs(q.px - px) <= eqTol * atr
+                        isEq := true
+                        q.eq := true
+                        if not na(q.ln)
+                            line.set_width(q.ln, 2)
+            line ln = na
+            if showLiq
+                ln := line.new(bar_index - swingN, px, bar_index, px, extend = extend.right, color = color.new(colLiq, isEq ? 20 : 55), width = isEq ? 2 : 1, style = line.style_dotted)
+            if isEq and showLiq
+                label.new(bar_index - swingN, px, side == 1 ? "EQH" : "EQL", style = side == 1 ? label.style_label_down : label.style_label_up, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny)
+            array.push(liqs, Liq.new(px = px, side = side, bar = bar_index - swingN, ln = ln, eq = isEq, brk = na))
+    while array.size(liqs) > maxLiq
+        Liq oldest = array.shift(liqs)
+        line.delete(oldest.ln)
+
+int nLiq = array.size(liqs)
+if nLiq > 0
+    for k = 1 to nLiq
+        int i = nLiq - k
+        Liq l = array.get(liqs, i)
+        bool done = false
+        bool swept = false
+        string how = ""
+        if l.side == 1
+            if na(l.brk)
+                if high > l.px
+                    if close < l.px
+                        swept := true
+                        how := "SFP"
+                    else
+                        l.brk := bar_index
+            else if close < l.px and bar_index - l.brk <= 3
+                swept := true
+                how := "BAC"
+            else if bar_index - l.brk > 3
+                done := true
+        else
+            if na(l.brk)
+                if low < l.px
+                    if close > l.px
+                        swept := true
+                        how := "SFP"
+                    else
+                        l.brk := bar_index
+            else if close > l.px and bar_index - l.brk <= 3
+                swept := true
+                how := "BAC"
+            else if bar_index - l.brk > 3
+                done := true
+        if swept
+            done := true
+            if l.side == 1
+                sweepBear := true
+                lastBslSweep := bar_index
+            else
+                sweepBull := true
+                lastSslSweep := bar_index
+            if showSweeps
+                label.new(bar_index, l.side == 1 ? high : low, (l.eq ? "EQ " : "") + how + (l.side == 1 ? " ↓" : " ↑"),
+                     style = l.side == 1 ? label.style_label_down : label.style_label_up,
+                     color = color.new(l.side == 1 ? colBear : colBull, 75), textcolor = l.side == 1 ? colBear : colBull, size = size.tiny)
+        if done
+            if not na(l.ln)
+                line.set_extend(l.ln, extend.none)
+                line.set_x2(l.ln, bar_index)
+                line.set_style(l.ln, swept ? line.style_solid : line.style_dotted)
+                line.set_color(l.ln, color.new(swept ? (l.side == 1 ? colBear : colBull) : colLiq, 70))
+            array.remove(liqs, i)
+
+bool recentSsl = not na(lastSslSweep) and bar_index - lastSslSweep <= sweepLook
+bool recentBsl = not na(lastBslSweep) and bar_index - lastBslSweep <= sweepLook
+
+// ───────────────────────── Fair value gaps ─────────────────────────
+bool fvgBull = low > high[2] and close[1] > open[1] and (close[1] - open[1]) >= dispMult * atr[1] and (low - high[2]) >= fvgMin * atr
+bool fvgBear = high < low[2] and close[1] < open[1] and (open[1] - close[1]) >= dispMult * atr[1] and (low[2] - high) >= fvgMin * atr
+if showFVG and fvgBull
+    float m = (low + high[2]) / 2
+    int sc = 1 + f_loc(1, m) + (recentSsl ? 1 : 0)
+    if sc >= minShow
+        f_addZone(low, high[2], 1, 2, sc, bar_index - 2, low[2], false)
+if showFVG and fvgBear
+    float m = (high + low[2]) / 2
+    int sc = 1 + f_loc(-1, m) + (recentBsl ? 1 : 0)
+    if sc >= minShow
+        f_addZone(low[2], high, -1, 2, sc, bar_index - 2, high[2], false)
+
+// ───────────────────────── Order blocks from structure breaks ─────────────────────────
+if bullBrk
+    f_createOB(1, bullAnchor)
+if bearBrk
+    f_createOB(-1, bearAnchor)
+
+// ───────────────────────── Zone maintenance and setup signals ─────────────────────────
+bool kzOK     = not reqKZ or inKZ
+bool sweepOKL = not reqSweep or recentSsl
+bool sweepOKS = not reqSweep or recentBsl
+
+Zone bestL = na
+Zone bestS = na
+int nZ = array.size(zones)
+if nZ > 0
+    for k = 1 to nZ
+        int i = nZ - k
+        Zone z = array.get(zones, i)
+        bool kill = bar_index - z.cb > lifeBars
+        if z.kind == 0
+            if z.dir == 1 and close < z.bot
+                kill := true
+            if z.dir == -1 and close > z.top
+                kill := true
+            if kill and showBrk and bar_index - z.cb <= lifeBars
+                float e = z.dir == 1 ? high : low
+                int lbk = math.min(bar_index - z.t0, 200)
+                for j = 0 to lbk
+                    e := z.dir == 1 ? math.max(e, high[j]) : math.min(e, low[j])
+                array.push(pend, Zone.new(top = z.top, bot = z.bot, dir = -z.dir, kind = 1, score = z.score, t0 = z.t0, cb = bar_index, ext = e, used = false))
+        else
+            if z.dir == 1 and close < z.bot
+                kill := true
+            if z.dir == -1 and close > z.top
+                kill := true
+        if kill
+            f_removeZone(z)
+            array.remove(zones, i)
+        else if enableSig and barstate.isconfirmed and not z.used and bar_index > z.cb and z.score >= minScoreEnt and (z.kind < 2 or fvgEntries)
+            float mid = (z.top + z.bot) / 2
+            float trig = entryMode == "50% mean" ? mid : (z.dir == 1 ? z.top : z.bot)
+            if z.dir == 1 and (allowCtr or biasDir == 1) and (not reqSync or trend == 1)
+                bool touched = low <= trig and close >= mid
+                bool locOK = not reqPD or (not na(pdMid) and mid < pdMid)
+                if touched and locOK and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
+                    bestL := z
+            if z.dir == -1 and (allowCtr or biasDir == -1) and (not reqSync or trend == -1)
+                bool touched = high >= trig and close <= mid
+                bool locOK = not reqPD or (not na(pdMid) and mid > pdMid)
+                if touched and locOK and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
+                    bestS := z
+
+if array.size(pend) > 0
+    for k = 0 to array.size(pend) - 1
+        Zone p = array.get(pend, k)
+        f_addZone(p.top, p.bot, p.dir, 1, p.score, p.t0, p.ext, false)
+    array.clear(pend)
+
+bool longSig = false
+bool shortSig = false
+float sigEntry = na
+float sigStop = na
+float sigTarget = na
+float sigRR = na
+if not na(bestL)
+    [en, sl, tp, rr] = f_plan(bestL)
+    if not na(rr) and rr >= minRR
+        longSig := true
+        bestL.used := true
+        sigEntry := en
+        sigStop := sl
+        sigTarget := tp
+        sigRR := rr
+        f_drawTrade(1, en, sl, tp, rr, bestL.score)
+if not na(bestS) and not longSig
+    [en, sl, tp, rr] = f_plan(bestS)
+    if not na(rr) and rr >= minRR
+        shortSig := true
+        bestS.used := true
+        sigEntry := en
+        sigStop := sl
+        sigTarget := tp
+        sigRR := rr
+        f_drawTrade(-1, en, sl, tp, rr, bestS.score)
+
+plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, size = size.small, text = "L")
+plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.small, text = "S")
+
+// ───────────────────────────── Dashboard ─────────────────────────────
+var table dash = table.new(dashPos, 2, 10, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+
+f_tick(bool ok) => ok ? "✓" : "✗"
+
+if showDash and barstate.islast
+    int dirC = biasDir
+    string dirTxt = dirC == 1 ? "Bullish" : dirC == -1 ? "Bearish" : "Undefined"
+    color dirCol = dirC == 1 ? colBull : dirC == -1 ? colBear : colLiq
+    bool locOKd = not na(pdMid) and ((dirC == 1 and close < pdMid) or (dirC == -1 and close > pdMid))
+    string locTxt = na(pdMid) ? "n/a" : close < pdMid ? "Discount" : close > pdMid ? "Premium" : "Equilibrium"
+    bool tgtOK = dirC == 1 ? not na(tgtHi) : dirC == -1 ? not na(tgtLo) : false
+    bool liqOK = tgtOK and (dirC == 1 ? recentSsl : dirC == -1 ? recentBsl : false)
+    Zone bz = na
+    if dirC != 0 and array.size(zones) > 0
+        for k = 0 to array.size(zones) - 1
+            Zone zz = array.get(zones, k)
+            if zz.dir == dirC and zz.score >= minScoreEnt and (zz.kind < 2 or fvgEntries) and (na(bz) or zz.score > bz.score)
+                bz := zz
+    bool syncOK = dirC != 0 and trend == dirC
+    bool modelOK = not na(bz) and syncOK
+    float planRR = na
+    if not na(bz)
+        [pe, ps, pt, pr] = f_plan(bz)
+        planRR := pr
+    bool rrOK = not na(planRR) and planRR >= minRR
+    string sess = inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "—"
+
+    table.cell(dash, 0, 0, "Mayne checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
+    table.cell(dash, 1, 0, syminfo.ticker, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
+    table.cell(dash, 0, 1, useHTF ? "1 HTF bias (" + htf + ")" : "1 Chart bias", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 1, dirTxt + " " + f_tick(dirC != 0), text_color = dirCol, text_size = size.small)
+    table.cell(dash, 0, 2, "2 Range location", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 2, locTxt + " " + f_tick(locOKd), text_color = locOKd ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 3, "3 Liquidity / target", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 3, (tgtOK ? "Target set" : "No target") + (liqOK ? " + sweep " : " ") + f_tick(tgtOK), text_color = tgtOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 4, "4 Entry model", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 4, (na(bz) ? "No POI" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 5, "5 Reward : risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 5, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 6, "Chart structure", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 6, trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "—", text_color = trend == 1 ? colBull : trend == -1 ? colBear : colLiq, text_size = size.small)
+    table.cell(dash, 0, 7, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 7, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
+    bool all5 = dirC != 0 and locOKd and tgtOK and modelOK and rrOK
+    table.cell(dash, 0, 8, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(all5 ? colBull : colBear, 70))
+    table.cell(dash, 1, 8, all5 ? "All boxes ticked" : "Wait", text_color = all5 ? colBull : colBear, text_size = size.small, bgcolor = color.new(all5 ? colBull : colBear, 70))
+
+// ───────────────────────────── Alerts ─────────────────────────────
+alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")
+alertcondition(shortSig, "TM short setup", "Trader Mayne framework: short setup on {{ticker}} ({{interval}})")
+alertcondition(bullBrk and bullMSS, "TM bullish MSS", "Bullish market structure shift on {{ticker}} ({{interval}})")
+alertcondition(bearBrk and bearMSS, "TM bearish MSS", "Bearish market structure shift on {{ticker}} ({{interval}})")
+alertcondition(sweepBull, "TM sell-side sweep", "Sell-side liquidity swept on {{ticker}} ({{interval}})")
+alertcondition(sweepBear, "TM buy-side sweep", "Buy-side liquidity swept on {{ticker}} ({{interval}})")
+alertcondition(judasBull or judasBear, "TM Judas swing", "Asian range Judas swing on {{ticker}} ({{interval}})")
