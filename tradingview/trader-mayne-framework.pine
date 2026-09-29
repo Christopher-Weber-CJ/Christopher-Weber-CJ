@@ -1,12 +1,13 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-16: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-17: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
 // reversal vs continuation setups with H4/H1 confirmation, the 15-minute variant, the silver bullet window,
 // the seven no-trade disqualifiers, and the risk framework (stop = invalidation, position sizing,
-// 2R exits with partials at internal liquidity, break-even win-rate math).
+// 2R exits with partials at internal liquidity, break-even win-rate math), and scaling in
+// (split the same risk across a zone, or add only on new confirmed models).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -97,6 +98,13 @@ riskPct  = input.float(1.0, "Risk per trade (%)  (his range: 0.5 - 2)", minval =
 winAt    = input.string("2R", "Count a signal as a win at", options = ["2R", "Full target"], tooltip = "His journal closes the trade at 2R. Full target = the external liquidity target.", group = G_RSK)
 showPart = input.bool(true, "Show a partial-profit level at internal liquidity", group = G_RSK)
 partPct  = input.float(25, "Partial size (%) - he uses 25% or 33%", minval = 5, maxval = 50, group = G_RSK)
+scaleMode  = input.string("Single entry", "Entry scaling (episode 17)", options = ["Single entry", "Scale in zone", "Add on confirmation"], tooltip = "Scaling splits the SAME risk into pieces, it never adds risk. Single entry = one order (his advice until you are comfortable). Scale in zone = top / middle / bottom of the zone. Add on confirmation = smaller first entry, then adds only when a new, separate model forms.", group = G_RSK)
+wTop       = input.float(30, "Scale in zone: top weight %", minval = 1, group = G_RSK)
+wMid       = input.float(30, "Scale in zone: middle weight %", minval = 1, group = G_RSK)
+wBot       = input.float(40, "Scale in zone: bottom weight %", minval = 1, group = G_RSK)
+firstPct   = input.float(50, "Add on confirmation: first entry as % of full size", minval = 10, maxval = 100, group = G_RSK)
+maxAdds    = input.int(2, "Add on confirmation: number of adds", minval = 1, maxval = 4, group = G_RSK)
+trailStops = input.bool(true, "Add on confirmation: move the stop up to each new model's swing low", group = G_RSK)
 
 G_DQ = "No-trade filters (episode 15)"
 minER     = input.float(0.10, "1. Bias clarity: minimum efficiency ratio on the direction timeframe (below = ranging, no trade)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Net move over 20 bars divided by total distance travelled. Near 0 = choppy / ranging. Set to 0 to disable.", group = G_DQ)
@@ -589,12 +597,32 @@ f_plan(Zone z) =>
     float rr = na(tp) ? na : math.abs(tp - entry) / math.abs(entry - sl)
     [entry, sl, tp, rr]
 
-f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string tag) =>
+f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string tag, float zTop, float zBot, float frac, float u0in) =>
     int r = bar_index + 15
+    float riskAmt = acct * riskPct / 100
     float risk = math.abs(en - sl)
     float t1 = en + dir * minRR * risk
-    float riskAmt = acct * riskPct / 100
-    float size = risk > 0 ? riskAmt / risk : na
+    string sizeTxt = ""
+    float avgE = en
+    if scaleMode == "Scale in zone"
+        float eTop = dir == 1 ? zTop : zBot
+        float eBot = dir == 1 ? zBot : zTop
+        float eMid = (zTop + zBot) / 2
+        float wsum = wTop + wMid + wBot
+        float wavg = (wTop * math.abs(eTop - sl) + wMid * math.abs(eMid - sl) + wBot * math.abs(eBot - sl)) / wsum
+        float u = wavg > 0 ? riskAmt / wavg : na
+        float s1 = u * wTop / wsum
+        float s2 = u * wMid / wsum
+        float s3 = u * wBot / wsum
+        avgE := (eTop * s1 + eMid * s2 + eBot * s3) / u
+        sizeTxt := "scale in zone " + str.tostring(s1, "#.####") + " / " + str.tostring(s2, "#.####") + " / " + str.tostring(s3, "#.####") + "\nrisk if all fill " + str.tostring(riskAmt, "#") + ", RR at avg " + str.tostring(math.abs(tp - avgE) / math.abs(avgE - sl), "#.0")
+        array.push(tLines, line.new(bar_index, eMid, r, eMid, color = colLiq, style = line.style_dotted))
+        array.push(tLines, line.new(bar_index, eBot, r, eBot, color = colLiq, style = line.style_dotted))
+        array.push(tLabels, label.new(r, eMid, "E2", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny))
+        array.push(tLabels, label.new(r, eBot, "E3", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny))
+    else
+        float u0 = na(u0in) ? riskAmt / risk : u0in
+        sizeTxt := "size " + str.tostring(u0 * frac, "#.####") + (frac < 1 ? " (" + str.tostring(frac * 100, "#") + "% of full)" : " (risk " + str.tostring(riskAmt, "#") + ")")
     array.push(tBoxes, box.new(bar_index, math.max(en, sl), r, math.min(en, sl), border_color = na, bgcolor = color.new(colBear, 82)))
     array.push(tBoxes, box.new(bar_index, math.max(en, tp), r, math.min(en, tp), border_color = na, bgcolor = color.new(colBull, 82)))
     array.push(tLines, line.new(bar_index, t1, r, t1, color = colBull, style = line.style_dashed))
@@ -609,13 +637,13 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string t
         if not na(pl)
             array.push(tLines, line.new(bar_index, pl, r, pl, color = colMSS, style = line.style_dotted))
             array.push(tLabels, label.new(r, pl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = size.tiny))
-    array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score) + "\nsize " + str.tostring(size, "#.####") + " (risk " + str.tostring(riskAmt, "#") + ")",
+    array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score) + "\n" + sizeTxt,
          style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = size.small))
     while array.size(tBoxes) > 12
         box.delete(array.shift(tBoxes))
-    while array.size(tLines) > 12
+    while array.size(tLines) > 20
         line.delete(array.shift(tLines))
-    while array.size(tLabels) > 24
+    while array.size(tLabels) > 30
         label.delete(array.shift(tLabels))
     true
 
@@ -849,6 +877,18 @@ if array.size(pend) > 0
         f_addZone(p.top, p.bot, p.dir, 1, p.score, p.t0, p.ext, false)
     array.clear(pend)
 
+// Add-on campaign state (episode 17): adds only while the campaign stop has not been hit.
+var int   campDir  = 0
+var int   campN    = 0
+var float campStop = na
+var float campU0   = na
+if campDir == 1 and low <= campStop
+    campDir := 0
+    campN := 0
+if campDir == -1 and high >= campStop
+    campDir := 0
+    campN := 0
+
 bool longSig = false
 bool shortSig = false
 float sigEntry = na
@@ -857,24 +897,64 @@ float sigTarget = na
 float sigRR = na
 if not na(bestL)
     [en, sl, tp, rr] = f_plan(bestL)
-    if not na(rr) and rr >= minRR
+    bool isAdd = scaleMode == "Add on confirmation" and campDir == 1 and campN >= 1 and campN <= maxAdds
+    float slUse = (isAdd and trailStops) ? math.max(campStop, bestL.ext - slBuf * atr) : sl
+    float rrUse = (not na(tp) and en > slUse) ? math.abs(tp - en) / math.abs(en - slUse) : na
+    if not na(rrUse) and rrUse >= minRR
         longSig := true
         bestL.used := true
+        float fr = 1.0
+        float u0 = na
+        string tg = (syncTrend == 1 ? "CONT" : "REV") + (inSB ? " SB" : "")
+        if scaleMode == "Add on confirmation"
+            if isAdd
+                campN += 1
+                fr := (1 - firstPct / 100) / maxAdds
+                u0 := campU0
+                campStop := slUse
+                tg := tg + " ADD" + str.tostring(campN - 1)
+            else
+                campDir := 1
+                campN := 1
+                campStop := slUse
+                campU0 := acct * riskPct / 100 / math.abs(en - slUse)
+                fr := firstPct / 100
+                u0 := campU0
         sigEntry := en
-        sigStop := sl
+        sigStop := slUse
         sigTarget := tp
-        sigRR := rr
-        f_drawTrade(1, en, sl, tp, rr, bestL.score, (syncTrend == 1 ? "CONT" : "REV") + (inSB ? " SB" : ""))
+        sigRR := rrUse
+        f_drawTrade(1, en, slUse, tp, rrUse, bestL.score, tg, bestL.top, bestL.bot, fr, u0)
 if not na(bestS) and not longSig
     [en, sl, tp, rr] = f_plan(bestS)
-    if not na(rr) and rr >= minRR
+    bool isAdd = scaleMode == "Add on confirmation" and campDir == -1 and campN >= 1 and campN <= maxAdds
+    float slUse = (isAdd and trailStops) ? math.min(campStop, bestS.ext + slBuf * atr) : sl
+    float rrUse = (not na(tp) and en < slUse) ? math.abs(tp - en) / math.abs(en - slUse) : na
+    if not na(rrUse) and rrUse >= minRR
         shortSig := true
         bestS.used := true
+        float fr = 1.0
+        float u0 = na
+        string tg = (syncTrend == -1 ? "CONT" : "REV") + (inSB ? " SB" : "")
+        if scaleMode == "Add on confirmation"
+            if isAdd
+                campN += 1
+                fr := (1 - firstPct / 100) / maxAdds
+                u0 := campU0
+                campStop := slUse
+                tg := tg + " ADD" + str.tostring(campN - 1)
+            else
+                campDir := -1
+                campN := 1
+                campStop := slUse
+                campU0 := acct * riskPct / 100 / math.abs(en - slUse)
+                fr := firstPct / 100
+                u0 := campU0
         sigEntry := en
-        sigStop := sl
+        sigStop := slUse
         sigTarget := tp
-        sigRR := rr
-        f_drawTrade(-1, en, sl, tp, rr, bestS.score, (syncTrend == -1 ? "CONT" : "REV") + (inSB ? " SB" : ""))
+        sigRR := rrUse
+        f_drawTrade(-1, en, slUse, tp, rrUse, bestS.score, tg, bestS.top, bestS.bot, fr, u0)
 
 int nTr = array.size(trDir)
 if nTr > 0
@@ -938,7 +1018,7 @@ if showDash and barstate.islast
     string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "-")
 
     table.cell(dash, 0, 0, "Top-down checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
-    table.cell(dash, 1, 0, syminfo.ticker, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
+    table.cell(dash, 1, 0, syminfo.ticker + " | " + scaleMode, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
     table.cell(dash, 0, 1, "1a Direction (" + dirTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 1, (not dirClear ? "Ranging" : dirTrend == 1 ? "Bullish" : dirTrend == -1 ? "Bearish" : "Range") + " " + f_tick(dirTrend != 0 and dirClear), text_color = not dirClear ? colLiq : dirTrend == 1 ? colBull : dirTrend == -1 ? colBear : colLiq, text_size = size.small)
     table.cell(dash, 0, 2, "1b Sync (" + syncTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)

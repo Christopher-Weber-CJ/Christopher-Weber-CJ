@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.5, built from episodes 1-16 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.6, built from episodes 1-17 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -29,6 +29,7 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 14 | Reversal vs continuation setups, H4 / H1 confirmation before the model, 15-minute model = same model on a higher chart, silver bullet windows | Reversal / continuation labels and stop rule, confirmation gate, silver bullet windows. See below. |
 | 15 | Seven disqualifiers: no HTF bias, wrong zone, no target or under 2R, incomplete model, chasing, news, emotion | No-trade filters and a dashboard row naming the first disqualifier. See below. |
 | 16 | Stop = invalidation, hard stop that never widens, position size from the stop, TP from internal / external liquidity, partials in 25% or 1/3, 2:1 minimum, break-even win-rate math | Risk and exits inputs, position size on every signal, 2R and partial levels. See below. |
+| 17 | Scaling in: split the same risk, never add risk. Scale within a zone, or add only on new confirmed models. No averaging down. | *Entry scaling* setting. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -77,17 +78,22 @@ No zone tag, no displacement, or under 2R means no signal. The dashboard shows w
 - Not enforceable by an indicator, so follow them yourself: place the stop as a hard order at entry, never widen it, do not move it to break even too early, and do not take profit just because the trade is green.
 - The dashboard's signal win / loss count now counts a win at 2R by default (*Count a signal as a win at*).
 
+**Scaling in (episode 17).** Scaling splits your predefined risk into pieces. It never adds risk. The default is *Single entry*, which is his advice until you are comfortable with the basic model.
+- **Scale in zone:** entries at the top, middle and bottom of the entry zone (default weights 30 / 30 / 40). The stop stays at the single planned stop. Sizes are solved so that, if all three fill and the stop is hit, you lose exactly your risk %. A shallow pullback fills less and risks less. Each signal label shows the three sizes and the reward:risk at your average entry. The signal itself is still gated on the top-of-zone reward:risk.
+- **Add on confirmation:** the first entry is a fraction of full size (default 50%). Each later add (default two, 25% each) fires only when a **new, separate model** forms (structure break, displacement, new FVG, retest) in the same direction. The stop can move up to each new model's swing low (never down), and the labels are tagged `ADD1`, `ADD2`. No adds fire after the campaign stop has been hit, which is how the indicator keeps you out of averaging down.
+- His combined ladder (half at the top of a daily zone, the rest on lower-timeframe models) can be approximated by using *Add on confirmation* on a lower-timeframe chart. The half-at-the-zone-touch entry is not automated.
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 17-25, not read yet)
+## Not yet implemented (episodes 18-25, not read yet)
 
-Episodes 17-25 are: the scaling strategy,
+Episodes 18-25 are:
 news trading, advanced dealing ranges, kill zones, SMT divergence,
 liquidity trap and learning liquidity, best-trade breakdown, and trading psychology.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-16 were supplied by hand. Episodes 17-25 are **not** in the script yet.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-17 were supplied by hand. Episodes 18-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
 
