@@ -9,16 +9,16 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 ## Install
 
 1. TradingView → Pine Editor → paste the file → *Add to chart*.
-2. Put it on the entry timeframe (for example 15m or 1h). The bias timeframe defaults to `D`, which must be above the chart timeframe.
+2. Put it on your execution timeframe (for example 5m). The direction, sync and context timeframes default to `W`, `D` and `240` (H4), and must be above the chart timeframe.
 
 ## What is implemented, by episode
 
 | Episode | Concept | In the indicator |
 |---|---|---|
 | 1-2 | Three-candle swings, HH/HL/LH/LL, MSB (continuation), MSS (reversal, break of the last HL/LH) | Structure engine. Breaks need a **close** through the level. `+D` marks a displacement candle. |
-| 1-4 | Working / dealing range from major swings, EQ 50%, premium / discount | Dealing range, EQ and shaded premium / discount. Uses the chart range or the HTF range. |
+| 1-4 | Working / dealing range from major swings, EQ 50%, premium / discount | Dealing range, EQ and shaded premium / discount. Uses the daily range, weekly range or chart range. |
 | 3, 11 | Buy-side / sell-side liquidity, equal highs / lows, SFP, break-and-close | Unswept swing levels as lines, EQH / EQL flags, and sweep markers (SFP, BAC). |
-| 4 | Internal liquidity is for entries, external range liquidity is for targets | The target is the far end of the HTF dealing range (chart range as fallback). |
+| 4 | Internal liquidity is for entries, external range liquidity is for targets | Targets are equal highs / lows and higher-timeframe range extremes. |
 | 5 | HTF bias, top-down, 4-point checklist, positive RR | HTF structure bias (non-repainting), checklist dashboard, minimum RR filter. |
 | 6 | Fair value gap: 3 candles with a displacement candle in the middle | FVG zones, with entry and stop rules. |
 | 7 | Order block = last opposite candle before displacement. Breaker = failed OB (S/R flip). Quality: displacement, MSB, liquidity taken, big candle, FVG overlap. | OB and breaker zones with a 0-7 quality score. The mean threshold is dotted. |
@@ -43,7 +43,7 @@ Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, 
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 12-25, not read yet)
+## Not yet implemented (episodes 13-25, not read yet)
 
 Episodes 13-25 are: the entry model, wrong-timeframe fix, when to walk away,
 losing trades and win rate, scaling, news trading, advanced dealing ranges, kill zones, SMT divergence,
