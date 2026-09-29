@@ -99,6 +99,17 @@ Example: `LONG REV SB A+ RR 2.4 ★5` with a size line under it.
 | `Entry` / `Stop` / `Target` | The plan at the time of the signal. `Target` is the external liquidity target. |
 | `Result` | `+2.0R` win (at 2R, or the full target if that setting is chosen), `-1R` loss, `open` if neither has been reached. Stop is assumed first if both are hit in one bar. |
 
+## Mountain-time windows (defaults)
+
+| Window | Mountain time | (New York time) |
+|---|---|---|
+| London kill zone | 00:00-03:00 | 02:00-05:00 |
+| New York kill zone | 05:00-08:00 | 07:00-10:00 |
+| Silver bullets | 01:00-02:00, 08:00-09:00, 12:00-13:00 | 03:00-04:00, 10:00-11:00, 14:00-15:00 |
+| NY afternoon (weaker) | 11:30-14:30 | 13:30-16:30 |
+| Asia range | 18:00-22:00 | 20:00-00:00 |
+| Forced flat / trading resumes (day trading mode defaults) | 14:45 / 16:00 | 16:45 / 18:00 |
+
 ## Alerts
 
 Long setup, short setup, bullish / bearish MSS, sell-side / buy-side sweep, news window starting, London / New York kill zone starting, bullish / bearish SMT, range AMD, Judas swing.

@@ -40,6 +40,17 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 25 | Where traders fail: oversizing, lottery brain, no measurement, overtrading, revenge trading, system hopping, quitting, complacency | Guard-rails only. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
+## Day trading mode (prop firm)
+
+Built for a firm that forces positions flat at a set time and lets you start again later (for example flat at 14:45 and trading again at 16:00 Mountain time, which is the futures daily reopen). It is **on by default**; switch *Day trading mode* off for the weekly / daily swing-style framework.
+- **Timeframes:** direction = daily, sync = 4-hour, context = 1-hour, setup confirmation = 15-minute, entries on your 5-minute (or 1-minute) chart.
+- **Flat clock:** set the forced-flat time and the time trading resumes. The flat and blackout period is shaded grey, no new entries are allowed in the last N minutes before flat (default 45), each trade label says how long is left to flat, the dashboard shows the time left, and an alert fires 15 minutes before flat.
+- **Intraday targets:** instead of weekly range extremes, targets are the previous day's high / low, the Asian range high / low, equal highs / lows and the chart range. A target must also be within a set fraction (default 60%) of the 5-day average daily range, so trades that could not realistically pay before the flat time are skipped.
+- **Contracts:** with a point value set (MES 5, ES 50, MNQ 2, NQ 20) the size is whole contracts, capped at your maximum, with the dollar risk shown. It says so when the stop is too wide for even one contract at your risk %.
+- **Daily loss guard:** *Stop signalling after losing N R today* uses the signal log's results for the current futures trading day (it resets at the chart's daily open). The dashboard shows today's R. Together with the daily signal cap and tilt guard, this limits how much the tool will keep suggesting after a bad day.
+- **Session windows** now default to Mountain time (timezone *America/Denver*): London 00:00-03:00, New York kill zone 05:00-08:00, silver bullets 01:00-02:00, 08:00-09:00 and 12:00-13:00, afternoon 11:30-14:30, Asia 18:00-22:00. These are his New York windows shifted two hours. Change the timezone and windows if yours differ.
+- Things it does **not** know: your firm's daily loss limit, trailing drawdown, profit target, consistency or news rules. Enter your own limits in R (the daily loss guard) and check the firm's rules yourself.
+
 ## Reading the chart (Display settings)
 
 The framework draws a lot, so *Chart view* has three levels and defaults to **Signals**:

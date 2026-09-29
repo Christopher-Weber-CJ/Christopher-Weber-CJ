@@ -1,6 +1,6 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-25: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-25 plus a day-trading mode: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
@@ -32,11 +32,11 @@ showStruct = input.bool(true, "Show MSB / MSS", group = G_STR)
 
 G_HTF = "Top-down process (episode 12)"
 useHTF       = input.bool(true, "Use top-down bias", group = G_HTF)
-dirTF        = input.timeframe("W", "Step 1a - direction timeframe (weekly)", group = G_HTF)
-syncTF       = input.timeframe("D", "Step 1b - sync timeframe (daily)", group = G_HTF)
-ctxTF        = input.timeframe("240", "Step 2 - context timeframe (H4): points of interest", group = G_HTF)
+dirTFin      = input.timeframe("W", "Step 1a - direction timeframe (weekly)", group = G_HTF)
+syncTFin     = input.timeframe("D", "Step 1b - sync timeframe (daily)", group = G_HTF)
+ctxTFin      = input.timeframe("240", "Step 2 - context timeframe (H4): points of interest", group = G_HTF)
 htfMajor     = input.int(5, "HTF major swing length", minval = 2, maxval = 30, group = G_HTF)
-setupTF      = input.timeframe("60", "Step 3 - setup timeframe (H1): confirmation", group = G_HTF)
+setupTFin    = input.timeframe("60", "Step 3 - setup timeframe (H1): confirmation", group = G_HTF)
 allowRev     = input.bool(true, "Allow reversal setups when the sync timeframe still disagrees (needs H4 / H1 confirmation)", group = G_HTF)
 reqConfirm   = input.bool(true, "Require H4 / H1 confirmation unless the sync timeframe already agrees", group = G_HTF)
 minStack     = input.int(0, "Require at least N of the 4 higher-timeframe ranges (W / D / H4 / H1) on the correct side of equilibrium", minval = 0, maxval = 4, tooltip = "Episode 19 stacking: longs want discount on every timeframe, shorts want premium. 0 = off (the stack is still graded and shown).", group = G_HTF)
@@ -72,16 +72,27 @@ eqTol      = input.float(0.1, "Equal highs/lows tolerance (ATR ×)", minval = 0.
 maxLiq     = input.int(16, "Max unswept levels tracked", minval = 4, maxval = 60, group = G_LIQ)
 sweepLook  = input.int(30, "A sweep counts as 'recent' for (bars)", minval = 3, maxval = 300, group = G_LIQ)
 
+G_DAY = "Day trading mode (prop firm)"
+dayMode      = input.bool(true, "Day trading mode", tooltip = "Uses daily / 4H / 1H / 15m as the direction / sync / context / setup timeframes, drops weekly targets in favour of intraday levels (previous day, Asia range, equal highs / lows), and adds the forced-flat clock, target reachability filter and contract sizing. Turn off for the swing-style weekly / daily framework.", group = G_DAY)
+flatH        = input.int(14, "Forced flat time: hour (24h, in the session timezone)", minval = 0, maxval = 23, group = G_DAY)
+flatM        = input.int(45, "Forced flat time: minute", minval = 0, maxval = 59, group = G_DAY)
+reopenH      = input.int(16, "Trading resumes: hour", minval = 0, maxval = 23, group = G_DAY)
+noEntryMin   = input.int(45, "No new entries in the last N minutes before flat", minval = 0, maxval = 600, group = G_DAY)
+maxAdrMult   = input.float(0.6, "Target must be within this fraction of the 5-day average daily range (0 = off)", minval = 0.0, step = 0.1, group = G_DAY)
+pointValue   = input.float(5.0, "Point value in $ (MES 5, ES 50, MNQ 2, NQ 20; 0 = size in units)", minval = 0.0, group = G_DAY)
+maxContracts = input.int(10, "Maximum contracts", minval = 1, group = G_DAY)
+dayLossR     = input.float(0, "Stop signalling after losing this many R today (0 = off)", minval = 0.0, step = 0.5, group = G_DAY)
+
 G_SES = "Sessions (intraday charts)"
 showKZ     = input.bool(true, "Shade sessions", group = G_SES)
-tz         = input.string("America/New_York", "Session timezone", group = G_SES)
-sbA        = input.session("0300-0400", "Silver bullet window 1", group = G_SES)
-sbB        = input.session("1000-1100", "Silver bullet window 2", group = G_SES)
-sbC        = input.session("1400-1500", "Silver bullet window 3", group = G_SES)
-asiaS      = input.session("2000-0000", "Asia (accumulation)", group = G_SES)
-lonS       = input.session("0200-0500", "London kill zone", group = G_SES)
-nyS        = input.session("0700-1000", "New York kill zone", group = G_SES)
-pmS        = input.session("1330-1630", "New York afternoon window (weaker: continuation / retrace)", group = G_SES)
+tz         = input.string("America/Denver", "Session timezone (windows below are in this timezone; Mountain time defaults)", group = G_SES)
+sbA        = input.session("0100-0200", "Silver bullet window 1", group = G_SES)
+sbB        = input.session("0800-0900", "Silver bullet window 2", group = G_SES)
+sbC        = input.session("1200-1300", "Silver bullet window 3", group = G_SES)
+asiaS      = input.session("1800-2200", "Asia (accumulation)", group = G_SES)
+lonS       = input.session("0000-0300", "London kill zone", group = G_SES)
+nyS        = input.session("0500-0800", "New York kill zone", group = G_SES)
+pmS        = input.session("1130-1430", "New York afternoon window (weaker: continuation / retrace)", group = G_SES)
 allowPM    = input.bool(false, "Count the afternoon window as a kill zone", group = G_SES)
 cryptoS    = input.session("0800-2100", "Crypto trading day (UTC)", group = G_SES)
 timeGrade  = input.bool(true, "Downgrade a setup one grade when it is outside the kill zones", group = G_SES)
@@ -178,6 +189,10 @@ colLon  = input.color(#2196f3, "London", group = G_COL)
 colNY   = input.color(#ffb300, "New York", group = G_COL)
 
 bool modelOn = entryModel == "5-minute model (FVG)"
+string dirTF   = dayMode ? "D" : dirTFin
+string syncTF  = dayMode ? "240" : syncTFin
+string ctxTF   = dayMode ? "60" : ctxTFin
+string setupTF = dayMode ? "15" : setupTFin
 bool cleanView = viewMode != "Full"
 bool sigView = viewMode == "Signals"
 bool useAsiaBox = showAsia and not cleanView
@@ -276,6 +291,8 @@ f_ctx(float o, float h, float l, float c) =>
 [ctxBullTop, ctxBullBot, ctxBearTop, ctxBearBot, ctxTrend] = request.security(syminfo.tickerid, ctxTF, f_ctx(open[1], high[1], low[1], close[1]), lookahead = barmerge.lookahead_off)
 [ctxTrend2, ctxHi, ctxLo, ctxER] = request.security(syminfo.tickerid, ctxTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 [setupTrend, setupHi, setupLo, setupER] = request.security(syminfo.tickerid, setupTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+[dayPrevH, dayPrevL] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+float adr = request.security(syminfo.tickerid, "D", ta.sma(high - low, 5)[1], lookahead = barmerge.lookahead_on)
 
 // ───────────────────────────── Core series ─────────────────────────────
 atr = ta.atr(atrLen)
@@ -444,6 +461,20 @@ bool inNY    = isIntra and not na(time(timeframe.period, nyS, tz))
 bool inPM    = isIntra and not na(time(timeframe.period, pmS, tz))
 bool inKZ    = inLon or inNY or (allowPM and inPM)
 bool inCrypto = isIntra and not na(time(timeframe.period, cryptoS, "UTC"))
+
+// Forced-flat clock (day trading mode): positions are flattened at flatH:flatM and trading resumes at reopenH:00.
+int mOfDay = hour(time, tz) * 60 + minute(time, tz)
+int flatAt = flatH * 60 + flatM
+int reopenAt = reopenH * 60
+bool blackout = dayMode and isIntra and mOfDay >= flatAt and mOfDay < reopenAt
+int minsToFlat = na
+if isIntra
+    if mOfDay < flatAt
+        minsToFlat := flatAt - mOfDay
+    else if mOfDay >= reopenAt
+        minsToFlat := (1440 - mOfDay) + flatAt
+bool nearFlat = dayMode and isIntra and (blackout or (not na(minsToFlat) and minsToFlat <= noEntryMin))
+bgcolor(blackout ? color.new(color.gray, 85) : na, title = "Flat / no-trade period")
 f_news(int t) => t > 0 and time >= t - newsPre * 60000 and time <= t + newsPost * 60000
 bool inNews  = f_news(newsT1) or f_news(newsT2) or f_news(newsT3)
 bgcolor(inNews ? color.new(color.red, 88) : na, title = "News no-trade window")
@@ -703,7 +734,11 @@ f_pickTarget(int dir, float entry, float risk) =>
     float far = na
     array<float> cand = array.new_float()
     array.push(cand, dir == 1 ? syncHi : syncLo)
-    array.push(cand, dir == 1 ? dirHi : dirLo)
+    if not dayMode
+        array.push(cand, dir == 1 ? dirHi : dirLo)
+    if dayMode
+        array.push(cand, dir == 1 ? dayPrevH : dayPrevL)
+        array.push(cand, dir == 1 ? asiaHi : asiaLo)
     array.push(cand, dir == 1 ? rHi : rLo)
     if array.size(liqs) > 0
         for k = 0 to array.size(liqs) - 1
@@ -712,7 +747,7 @@ f_pickTarget(int dir, float entry, float risk) =>
                 array.push(cand, q.px)
     for k = 0 to array.size(cand) - 1
         float t = array.get(cand, k)
-        if not na(t) and (dir == 1 ? t > entry : t < entry)
+        if not na(t) and (dir == 1 ? t > entry : t < entry) and (not dayMode or maxAdrMult <= 0 or na(adr) or math.abs(t - entry) <= maxAdrMult * adr)
             if na(far) or math.abs(t - entry) > math.abs(far - entry)
                 far := t
             if math.abs(t - entry) / risk >= minRR and (na(pick) or math.abs(t - entry) < math.abs(pick - entry))
@@ -737,6 +772,12 @@ f_plan(Zone z) =>
     float rr = na(tp) ? na : math.abs(tp - entry) / math.abs(entry - sl)
     [entry, sl, tp, rr]
 
+f_qty(float x) =>
+    pointValue > 0 ? math.min(math.floor(x), maxContracts) : x
+
+f_qtyTxt(float x) =>
+    str.tostring(f_qty(x), pointValue > 0 ? "#" : "#.####")
+
 f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string tag, float zTop, float zBot, float frac, float u0in) =>
     int r = bar_index + 15
     float riskAmt = acct * f_riskPct(dir) / 100
@@ -750,19 +791,25 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string t
         float eMid = (zTop + zBot) / 2
         float wsum = wTop + wMid + wBot
         float wavg = (wTop * math.abs(eTop - sl) + wMid * math.abs(eMid - sl) + wBot * math.abs(eBot - sl)) / wsum
-        float u = wavg > 0 ? riskAmt / wavg : na
+        float u = wavg > 0 ? riskAmt / (wavg * (pointValue > 0 ? pointValue : 1.0)) : na
         float s1 = u * wTop / wsum
         float s2 = u * wMid / wsum
         float s3 = u * wBot / wsum
         avgE := (eTop * s1 + eMid * s2 + eBot * s3) / u
-        sizeTxt := "scale in zone " + str.tostring(s1, "#.####") + " / " + str.tostring(s2, "#.####") + " / " + str.tostring(s3, "#.####") + "\nrisk if all fill " + str.tostring(riskAmt, "#") + ", RR at avg " + str.tostring(math.abs(tp - avgE) / math.abs(avgE - sl), "#.0")
+        sizeTxt := "scale in zone " + f_qtyTxt(s1) + " / " + f_qtyTxt(s2) + " / " + f_qtyTxt(s3) + (pointValue > 0 ? " contracts" : "") + "\nrisk if all fill " + str.tostring(riskAmt, "#") + ", RR at avg " + str.tostring(math.abs(tp - avgE) / math.abs(avgE - sl), "#.0")
         array.push(tLines, line.new(bar_index, eMid, r, eMid, color = colLiq, style = line.style_dotted))
         array.push(tLines, line.new(bar_index, eBot, r, eBot, color = colLiq, style = line.style_dotted))
         array.push(tLabels, label.new(r, eMid, "E2", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = lblTiny))
         array.push(tLabels, label.new(r, eBot, "E3", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = lblTiny))
     else
-        float u0 = na(u0in) ? riskAmt / risk : u0in
-        sizeTxt := "size " + str.tostring(u0 * frac, "#.####") + (frac < 1 ? " (" + str.tostring(frac * 100, "#") + "% of full)" : " (risk " + str.tostring(riskAmt, "#") + ")")
+        float u0 = na(u0in) ? riskAmt / (risk * (pointValue > 0 ? pointValue : 1.0)) : u0in
+        float qn = f_qty(u0 * frac)
+        if pointValue > 0
+            sizeTxt := "size " + f_qtyTxt(u0 * frac) + " contracts" + (qn < 1 ? " - stop too wide for 1" : " ($" + str.tostring(qn * risk * pointValue, "#") + " risk)")
+        else
+            sizeTxt := "size " + str.tostring(u0 * frac, "#.####") + (frac < 1 ? " (" + str.tostring(frac * 100, "#") + "% of full)" : " (risk " + str.tostring(riskAmt, "#") + ")")
+    if dayMode and not na(minsToFlat)
+        sizeTxt := sizeTxt + "\nflat in " + str.tostring(math.floor(minsToFlat / 60)) + "h " + str.tostring(minsToFlat % 60) + "m"
     array.push(tBoxes, box.new(bar_index, math.max(en, sl), r, math.min(en, sl), border_color = na, bgcolor = color.new(colBear, 82)))
     array.push(tBoxes, box.new(bar_index, math.max(en, tp), r, math.min(en, tp), border_color = na, bgcolor = color.new(colBull, 82)))
     array.push(tLines, line.new(bar_index, t1, r, t1, color = colBull, style = line.style_dashed))
@@ -1073,6 +1120,7 @@ var array<float>  lgRes = array.new<float>()
 var array<string> lgTag = array.new<string>()
 var int wins = 0
 var float netR = 0.0
+var float dayR = 0.0
 var int losses = 0
 var int consecLoss = 0
 var int lastLossBar = na
@@ -1083,10 +1131,12 @@ if tiltN > 0 and consecLoss >= tiltN and not na(lastLossBar) and bar_index - las
 bool tiltBlocked = tiltN > 0 and consecLoss >= tiltN
 if newDay
     sigToday := 0
+    dayR := 0.0
 bool capHit = maxDaily > 0 and sigToday >= maxDaily
+bool dayLossHit = dayLossR > 0 and dayR <= -dayLossR
 
 // Timing / discipline gates: kill zone, silver bullet, news window, tilt guard.
-bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and (not reqCrypto or inCrypto) and not inNews and not tiltBlocked and not capHit
+bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and (not reqCrypto or inCrypto) and not inNews and not tiltBlocked and not capHit and not nearFlat and not dayLossHit
 [stkLn, stkLt] = f_stack(1)
 [stkSn, stkSt] = f_stack(-1)
 bool smtOKL    = not reqSMT or (not na(lastSmtBull) and bar_index - lastSmtBull <= smtLook)
@@ -1197,7 +1247,7 @@ if not na(bestL)
                 campDir := 1
                 campN := 1
                 campStop := slUse
-                campU0 := acct * f_riskPct(1) / 100 / math.abs(en - slUse)
+                campU0 := acct * f_riskPct(1) / 100 / (math.abs(en - slUse) * (pointValue > 0 ? pointValue : 1.0))
                 fr := firstPct / 100
                 u0 := campU0
         sigEntry := en
@@ -1228,7 +1278,7 @@ if not na(bestS) and not longSig
                 campDir := -1
                 campN := 1
                 campStop := slUse
-                campU0 := acct * f_riskPct(-1) / 100 / math.abs(en - slUse)
+                campU0 := acct * f_riskPct(-1) / 100 / (math.abs(en - slUse) * (pointValue > 0 ? pointValue : 1.0))
                 fr := firstPct / 100
                 u0 := campU0
         sigEntry := en
@@ -1256,6 +1306,7 @@ if nLg > 0
                 float rMult = hitSl ? -1.0 : math.abs(tpv - en0) / math.abs(en0 - slv)
                 array.set(lgRes, i, rMult)
                 netR += rMult
+                dayR += rMult
                 if hitSl
                     losses += 1
                     consecLoss += 1
@@ -1286,7 +1337,7 @@ plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, s
 plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.normal, text = "S")
 
 // ───────────────────────────── Dashboard ─────────────────────────────
-var table dash = table.new(dashPos, 2, 17, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+var table dash = table.new(dashPos, 2, 19, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
 
 f_tick(bool ok) => ok ? "✓" : "✗"
 
@@ -1314,7 +1365,7 @@ if showDash and barstate.islast
     if not na(bz)
         [pe, ps, pt, pr] = f_plan(bz)
         planRR := pr
-        planSize := math.abs(pe - ps) > 0 ? (acct * f_riskPct(dirC) / 100) / math.abs(pe - ps) : na
+        planSize := math.abs(pe - ps) > 0 ? (acct * f_riskPct(dirC) / 100) / (math.abs(pe - ps) * (pointValue > 0 ? pointValue : 1.0)) : na
     bool rrOK = not na(planRR) and planRR >= minRR
     string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inPM ? "NY afternoon" : inAsia ? "Asia" : "-")
 
@@ -1339,14 +1390,14 @@ if showDash and barstate.islast
     table.cell(dash, 0, 9, "Session", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
     table.cell(dash, 1, 9, sess, text_color = inKZ ? colNY : colLiq, text_size = dashTxt)
     bool chased = not na(lastChase) and bar_index - lastChase <= 30
-    string dq = dirC == 0 ? "1 No clear bias" : not locOKd ? "2 Wrong zone" : not rrOK ? "3 No target / under " + str.tostring(minRR, "#.#") + "R" : not modelOK ? "4 Model incomplete" : chased ? "5 Missed entry (no chase)" : inNews ? "6 News window" : tiltBlocked ? "7 Tilt guard" : capHit ? "8 Daily signal cap" : "None"
-    bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK and not inNews and not tiltBlocked and not capHit
+    string dq = dirC == 0 ? "1 No clear bias" : not locOKd ? "2 Wrong zone" : not rrOK ? "3 No target / under " + str.tostring(minRR, "#.#") + "R" : not modelOK ? "4 Model incomplete" : chased ? "5 Missed entry (no chase)" : inNews ? "6 News window" : tiltBlocked ? "7 Tilt guard" : capHit ? "8 Daily signal cap" : nearFlat ? "9 Too close to flat time" : dayLossHit ? "10 Day loss cap" : "None"
+    bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK and not inNews and not tiltBlocked and not capHit and not nearFlat and not dayLossHit
     table.cell(dash, 0, 10, "No-trade filter", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
     table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = dashTxt)
     table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
     table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = dashTxt)
     table.cell(dash, 0, 12, "Size at " + str.tostring(f_riskPct(dirC), "#.##") + "% risk", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
-    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")" + (f_riskPct(dirC) > 2 ? " - above 2%, oversizing risk" : ""), text_color = f_riskPct(dirC) > 2 ? colBear : color.white, text_size = dashTxt)
+    table.cell(dash, 1, 12, na(planSize) ? "n/a" : f_qtyTxt(planSize) + (pointValue > 0 ? " contracts" : "") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")" + (f_riskPct(dirC) > 2 ? " - above 2%, oversizing risk" : ""), text_color = f_riskPct(dirC) > 2 ? colBear : color.white, text_size = dashTxt)
     string grade = dirC != 0 ? f_grade(dirC) : "-"
     table.cell(dash, 0, 13, "Range stack W/D/4H/1H", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
     table.cell(dash, 1, 13, f_letter(dirHi, dirLo) + " " + f_letter(syncHi, syncLo) + " " + f_letter(ctxHi, ctxLo) + " " + f_letter(setupHi, setupLo) + "  grade " + grade, text_color = grade == "A+" or grade == "A" ? colBull : colLiq, text_size = dashTxt)
@@ -1356,8 +1407,13 @@ if showDash and barstate.islast
     string biasTxt = noBiasDay ? "No-bias day (mid close)" : dailyBias == 1 ? "Bullish" : dailyBias == -1 ? "Bearish" : "Unclear"
     table.cell(dash, 0, 15, "Daily bias (ep 22)", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
     table.cell(dash, 1, 15, biasTxt + " | draw " + (drawDir == 1 ? "up" : drawDir == -1 ? "down" : "-") + ", close " + (na(closePos) ? "n/a" : str.tostring(closePos * 100, "#") + "%"), text_color = dailyBias == 1 ? colBull : dailyBias == -1 ? colBear : colLiq, text_size = dashTxt)
-    table.cell(dash, 0, 16, "Take the trade?", text_color = color.white, text_size = dashTxt, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
-    table.cell(dash, 1, 16, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = dashTxt, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    string flatTxt = not dayMode ? "off" : blackout ? "Flat until " + str.tostring(reopenH) + ":00" : na(minsToFlat) ? "n/a" : str.tostring(math.floor(minsToFlat / 60)) + "h " + str.tostring(minsToFlat % 60) + "m" + (nearFlat ? " - no new entries" : "")
+    table.cell(dash, 0, 16, "Time to flat", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 16, flatTxt, text_color = nearFlat ? colBear : color.white, text_size = dashTxt)
+    table.cell(dash, 0, 17, "Today (R)", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 17, str.tostring(dayR, "#.0") + "R" + (dayLossR > 0 ? " (cap -" + str.tostring(dayLossR, "#.#") + "R)" : ""), text_color = dayLossHit ? colBear : color.white, text_size = dashTxt)
+    table.cell(dash, 0, 18, "Take the trade?", text_color = color.white, text_size = dashTxt, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 18, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = dashTxt, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Signal log table ─────────────────────────────
 var table logTbl = table.new(logPos, 6, 10, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
@@ -1392,6 +1448,7 @@ alertcondition(sweepBear, "TM buy-side sweep", "Buy-side liquidity swept on {{ti
 alertcondition(amdBull or amdBear, "TM range AMD", "Range sweep and structure break (spring / UTAD style AMD) on {{ticker}} ({{interval}})")
 alertcondition(smtBull, "TM bullish SMT", "Bullish SMT divergence at a key level on {{ticker}} ({{interval}})")
 alertcondition(smtBear, "TM bearish SMT", "Bearish SMT divergence at a key level on {{ticker}} ({{interval}})")
+alertcondition(dayMode and isIntra and not na(minsToFlat) and minsToFlat <= 15 and (na(minsToFlat[1]) or minsToFlat[1] > 15), "TM 15 minutes to flat", "15 minutes until forced flat on {{ticker}}: manage or close open positions")
 alertcondition(inNews and not inNews[1], "TM news window starting", "News window starting on {{ticker}}: no new entries, manage open trades")
 alertcondition(inLon and not inLon[1], "TM London kill zone starting", "London kill zone starting on {{ticker}}")
 alertcondition(inNY and not inNY[1], "TM New York kill zone starting", "New York kill zone starting on {{ticker}}")
