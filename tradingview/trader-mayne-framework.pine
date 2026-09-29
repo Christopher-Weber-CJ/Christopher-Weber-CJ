@@ -14,7 +14,7 @@
 // previous day / week / month liquidity, chart patterns read as liquidity plus structure (range AMD),
 // and behavioural guard-rails (oversizing warning, daily signal cap, tilt guard, signal stats).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
-indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
+indicator("Trader Mayne Framework", shorttitle = "TM Frame", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
 
 // ───────────────────────────── Inputs ─────────────────────────────
@@ -201,7 +201,7 @@ f_htf(float h, float l, float c, int majLen) =>
         mHi := mph
     if not na(mpl)
         mLo := mpl
-    float path = ta.sum(math.abs(ta.change(c)), 20)
+    float path = math.sum(math.abs(ta.change(c)), 20)
     float eff = path > 0 ? math.abs(c - c[20]) / path : 0.0
     [tr, mHi, mLo, eff]
 
@@ -736,15 +736,15 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string t
     array.push(tLines, line.new(bar_index, t1, r, t1, color = colBull, style = line.style_dashed))
     array.push(tLabels, label.new(r, t1, str.tostring(minRR, "#.#") + "R", style = label.style_label_left, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny))
     if showPart and array.size(liqs) > 0
-        float pl = na
+        float partLvl = na
         for k = 0 to array.size(liqs) - 1
             Liq q = array.get(liqs, k)
             if q.side == dir and (dir == 1 ? (q.px > en and q.px < t1) : (q.px < en and q.px > t1))
-                if na(pl) or math.abs(q.px - en) < math.abs(pl - en)
-                    pl := q.px
-        if not na(pl)
-            array.push(tLines, line.new(bar_index, pl, r, pl, color = colMSS, style = line.style_dotted))
-            array.push(tLabels, label.new(r, pl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = size.tiny))
+                if na(partLvl) or math.abs(q.px - en) < math.abs(partLvl - en)
+                    partLvl := q.px
+        if not na(partLvl)
+            array.push(tLines, line.new(bar_index, partLvl, r, partLvl, color = colMSS, style = line.style_dotted))
+            array.push(tLabels, label.new(r, partLvl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = size.tiny))
     array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score) + "\n" + sizeTxt,
          style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = size.small))
     while array.size(tBoxes) > 12
@@ -1246,7 +1246,7 @@ if showDash and barstate.islast
     if not na(bz)
         [pe, ps, pt, pr] = f_plan(bz)
         planRR := pr
-        planSize = math.abs(pe - ps) > 0 ? (acct * f_riskPct(dirC) / 100) / math.abs(pe - ps) : na
+        planSize := math.abs(pe - ps) > 0 ? (acct * f_riskPct(dirC) / 100) / math.abs(pe - ps) : na
     bool rrOK = not na(planRR) and planRR >= minRR
     string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inPM ? "NY afternoon" : inAsia ? "Asia" : "-")
 
