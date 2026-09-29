@@ -15,9 +15,13 @@
 // and behavioural guard-rails (oversizing warning, daily signal cap, tilt guard, signal stats).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Frame", overlay = true,
-     max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+     max_bars_back = 500, max_boxes_count = 100, max_lines_count = 150, max_labels_count = 150)
 
 // ───────────────────────────── Inputs ─────────────────────────────
+G_VIEW = "Display"
+viewMode = input.string("Clean", "Chart view", options = ["Clean", "Full"], tooltip = "Clean: dashboard, dealing range, context POI, model entry zones, equal-high/low liquidity, meaningful sweeps and structure shifts, recent trade plans. Full: everything.", group = G_VIEW)
+cleanMinScore = input.int(5, "Clean view: also show order blocks / breakers scoring at least", minval = 0, maxval = 7, group = G_VIEW)
+
 G_STR = "Market structure"
 swingN     = input.int(1, "Swing candles each side (1 = three-candle swing)", minval = 1, maxval = 5, group = G_STR)
 majorN     = input.int(8, "Major swing length (dealing range)", minval = 2, maxval = 50, group = G_STR)
@@ -155,6 +159,7 @@ maxDaily  = input.int(0, "Overtrading guard: maximum signals per day (0 = off)",
 
 G_DSH = "Dashboard"
 showDash = input.bool(true, "Show checklist dashboard", group = G_DSH)
+dashSize = input.string("small", "Text size", options = ["tiny", "small", "normal", "large"], group = G_DSH)
 dashPos  = input.string(position.top_right, "Position", options = [position.top_right, position.middle_right, position.bottom_right, position.top_left, position.middle_left, position.bottom_left], group = G_DSH)
 
 G_COL = "Colors"
@@ -169,6 +174,10 @@ colLon  = input.color(#2196f3, "London", group = G_COL)
 colNY   = input.color(#ffb300, "New York", group = G_COL)
 
 bool modelOn = entryModel == "5-minute model (FVG)"
+bool cleanView = viewMode == "Clean"
+bool useAsiaBox = showAsia and not cleanView
+bool showRanges = showHTFRange and not cleanView
+dashTxt = dashSize == "tiny" ? size.tiny : dashSize == "normal" ? size.normal : dashSize == "large" ? size.large : size.small
 
 // ───────────────────── Higher-timeframe structure ─────────────────────
 // Runs inside request.security on series shifted by one bar, so the HTF values never use the
@@ -300,7 +309,7 @@ if not shDone and close > shLvl
     bullMSS := trend == -1
     bullAnchor := shBar
     shDone := true
-    if showStruct
+    if showStruct and (not cleanView or bullMSS or bodyBig)
         color mc = bullMSS ? colMSS : colBull
         line.new(shBar, shLvl, bar_index, shLvl, color = mc, style = line.style_dashed)
         label.new(math.round(math.avg(shBar, bar_index)), shLvl, (bullMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
@@ -312,7 +321,7 @@ if not slDone and close < slLvl
     bearMSS := trend == 1
     bearAnchor := slBar
     slDone := true
-    if showStruct
+    if showStruct and (not cleanView or bearMSS or bodyBig)
         color mc = bearMSS ? colMSS : colBear
         line.new(slBar, slLvl, bar_index, slLvl, color = mc, style = line.style_dashed)
         label.new(math.round(math.avg(slBar, bar_index)), slLvl, (bearMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
@@ -337,7 +346,7 @@ if not na(mph)
     if na(oldHi) or mph <= oldHi or expUp
         if not na(oldHi) and mph > oldHi
             expUp := false
-            if showOldRange
+            if showOldRange and not cleanView
                 line.new(rHiBar, oldHi, bar_index, oldHi, extend = extend.right, color = color.new(colLiq, 40), style = line.style_dotted)
                 label.new(bar_index, oldHi, "old range high", style = label.style_label_down, color = color.new(colLiq, 85), textcolor = colLiq, size = size.tiny)
         rHi := mph
@@ -348,7 +357,7 @@ if not na(mpl)
     if na(oldLo) or mpl >= oldLo or expDn
         if not na(oldLo) and mpl < oldLo
             expDn := false
-            if showOldRange
+            if showOldRange and not cleanView
                 line.new(rLoBar, oldLo, bar_index, oldLo, extend = extend.right, color = color.new(colLiq, 40), style = line.style_dotted)
                 label.new(bar_index, oldLo, "old range low", style = label.style_label_up, color = color.new(colLiq, 85), textcolor = colLiq, size = size.tiny)
         rLo := mpl
@@ -390,7 +399,7 @@ if showRange and rangeChanged and chartRangeOK
     rngHi := line.new(x0, rHi, bar_index, rHi, extend = extend.right, color = color.new(colBear, 30), width = 1)
     rngLo := line.new(x0, rLo, bar_index, rLo, extend = extend.right, color = color.new(colBull, 30), width = 1)
     rngEq := line.new(x0, eq, bar_index, eq, extend = extend.right, color = color.new(colLiq, 20), style = line.style_dashed)
-    if showPD
+    if showPD and not cleanView
         bxPrem := box.new(x0, rHi, bar_index, eq, border_color = na, bgcolor = color.new(colBear, 93), extend = extend.right)
         bxDisc := box.new(x0, eq, bar_index, rLo, border_color = na, bgcolor = color.new(colBull, 93), extend = extend.right)
     if showOTE
@@ -400,11 +409,11 @@ if showRange and rangeChanged and chartRangeOK
         bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE", text_size = size.tiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
         rngSweet := line.new(x0, sp, bar_index, sp, extend = extend.right, color = color.new(colMSS, 40), style = line.style_dotted)
 
-plot(showHTFRange and syncRangeOK ? syncHi : na, "Sync TF range high", color = color.new(colBear, 50), style = plot.style_linebr)
-plot(showHTFRange and syncRangeOK ? syncLo : na, "Sync TF range low", color = color.new(colBull, 50), style = plot.style_linebr)
-plot(showHTFRange and syncRangeOK ? (syncHi + syncLo) / 2 : na, "Sync TF equilibrium", color = color.new(colLiq, 50), style = plot.style_linebr)
-plot(showHTFRange and dirRangeOK ? dirHi : na, "Direction TF range high", color = color.new(colBear, 75), style = plot.style_linebr)
-plot(showHTFRange and dirRangeOK ? dirLo : na, "Direction TF range low", color = color.new(colBull, 75), style = plot.style_linebr)
+plot(showRanges and syncRangeOK ? syncHi : na, "Sync TF range high", color = color.new(colBear, 50), style = plot.style_linebr)
+plot(showRanges and syncRangeOK ? syncLo : na, "Sync TF range low", color = color.new(colBull, 50), style = plot.style_linebr)
+plot(showRanges and syncRangeOK ? (syncHi + syncLo) / 2 : na, "Sync TF equilibrium", color = color.new(colLiq, 50), style = plot.style_linebr)
+plot(showRanges and dirRangeOK ? dirHi : na, "Direction TF range high", color = color.new(colBear, 75), style = plot.style_linebr)
+plot(showRanges and dirRangeOK ? dirLo : na, "Direction TF range low", color = color.new(colBull, 75), style = plot.style_linebr)
 pBullTop = plot(showHTFRange ? ctxBullTop : na, "Context bullish POI top", color = color.new(colBull, 70), style = plot.style_linebr)
 pBullBot = plot(showHTFRange ? ctxBullBot : na, "Context bullish POI bottom", color = color.new(colBull, 70), style = plot.style_linebr)
 fill(pBullTop, pBullBot, color = color.new(colBull, 88), title = "Context bullish POI")
@@ -425,8 +434,8 @@ bool inNews  = f_news(newsT1) or f_news(newsT2) or f_news(newsT3)
 bgcolor(inNews ? color.new(color.red, 88) : na, title = "News no-trade window")
 bool inSB    = isIntra and (not na(time(timeframe.period, sbA, tz)) or not na(time(timeframe.period, sbB, tz)) or not na(time(timeframe.period, sbC, tz)))
 
-bgcolor(showKZ and inSB ? color.new(color.white, 88) : na, title = "Silver bullet window")
-bgcolor(showKZ and inLon ? color.new(colLon, 93) : showKZ and inNY ? color.new(colNY, 93) : showKZ and inPM ? color.new(colLiq, 94) : showKZ and inAsia ? color.new(colAsia, 95) : na)
+bgcolor(showKZ and not cleanView and inSB ? color.new(color.white, 88) : na, title = "Silver bullet window")
+bgcolor(showKZ and inLon ? color.new(colLon, 93) : showKZ and inNY ? color.new(colNY, 93) : showKZ and not cleanView and inPM ? color.new(colLiq, 94) : showKZ and not cleanView and inAsia ? color.new(colAsia, 95) : na)
 
 var float asiaHi = na
 var float asiaLo = na
@@ -435,12 +444,12 @@ bool newAsia = inAsia and not inAsia[1]
 if newAsia
     asiaHi := high
     asiaLo := low
-    if showAsia
+    if useAsiaBox
         asiaBx := box.new(bar_index, high, bar_index, low, border_color = color.new(colAsia, 40), bgcolor = color.new(colAsia, 90), text = "Asia", text_size = size.tiny, text_color = color.new(colAsia, 20), text_halign = text.align_left)
 else if inAsia
     asiaHi := math.max(asiaHi, high)
     asiaLo := math.min(asiaLo, low)
-if showAsia and not na(asiaBx) and (inAsia or inKZ)
+if useAsiaBox and not na(asiaBx) and (inAsia or inKZ)
     box.set_top(asiaBx, asiaHi)
     box.set_bottom(asiaBx, asiaLo)
     box.set_right(asiaBx, bar_index)
@@ -464,8 +473,8 @@ if showJudas and isIntra and not inAsia and inKZ and not na(asiaLo)
 
 float dOpen = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_on)
 float wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
-plot(showOpens ? dOpen : na, "Daily open", color = color.new(colNY, 20), style = plot.style_linebr)
-plot(showOpens ? wOpen : na, "Weekly open", color = color.new(colLon, 20), style = plot.style_linebr)
+plot(showOpens and not cleanView ? dOpen : na, "Daily open", color = color.new(colNY, 20), style = plot.style_linebr)
+plot(showOpens and not cleanView ? wOpen : na, "Weekly open", color = color.new(colLon, 20), style = plot.style_linebr)
 
 int  dow   = dayofweek(time, tz)
 bool isMon = dow == dayofweek.monday
@@ -478,8 +487,8 @@ if isMon
     else
         monHi := math.max(monHi, high)
         monLo := math.min(monLo, low)
-plot(showMonday and not isMon ? monHi : na, "Monday high", color = color.new(colLiq, 30), style = plot.style_linebr)
-plot(showMonday and not isMon ? monLo : na, "Monday low", color = color.new(colLiq, 30), style = plot.style_linebr)
+plot(showMonday and not cleanView and not isMon ? monHi : na, "Monday high", color = color.new(colLiq, 30), style = plot.style_linebr)
+plot(showMonday and not cleanView and not isMon ? monLo : na, "Monday low", color = color.new(colLiq, 30), style = plot.style_linebr)
 
 // ───────────────────────── Zones: types and helpers ─────────────────────────
 type Zone
@@ -587,14 +596,22 @@ f_removeZone(Zone z) =>
     line.delete(z.mid)
     true
 
+f_showZone(Zone z, bool star) =>
+    color base = z.kind == 0 ? (z.dir == 1 ? colBull : colBear) : z.kind == 1 ? (z.dir == 1 ? colBrkL : colBrkS) : (z.dir == 1 ? colBull : colBear)
+    string nm = (z.dir == 1 ? "Bull " : "Bear ") + (z.kind == 0 ? "OB" : z.kind == 1 ? "BRK" : "FVG") + " " + str.tostring(z.score) + (star ? "★" : "")
+    float mid = (z.top + z.bot) / 2
+    z.bx := box.new(z.t0, z.top, bar_index + 1, z.bot, border_color = color.new(base, 30), border_style = z.kind == 2 ? line.style_dotted : line.style_solid,
+         bgcolor = color.new(base, z.kind == 2 ? 92 : 84), extend = extend.right, text = nm, text_size = size.tiny, text_color = color.new(base, 10), text_halign = text.align_right)
+    z.mid := line.new(z.t0, mid, bar_index + 1, mid, extend = extend.right, color = color.new(base, 40), style = line.style_dotted)
+    true
+
+// In the clean view only order blocks / breakers above the score threshold are drawn on creation.
+// Fair value gaps are drawn once a qualifying 5-minute-model structure break claims them.
 f_addZone(float top, float bot, int dir, int kind, int score, int t0, float ext, bool star) =>
-    color base = kind == 0 ? (dir == 1 ? colBull : colBear) : kind == 1 ? (dir == 1 ? colBrkL : colBrkS) : (dir == 1 ? colBull : colBear)
-    string nm = (dir == 1 ? "Bull " : "Bear ") + (kind == 0 ? "OB" : kind == 1 ? "BRK" : "FVG") + " " + str.tostring(score) + (star ? "★" : "")
-    float mid = (top + bot) / 2
-    box bx = box.new(t0, top, bar_index + 1, bot, border_color = color.new(base, 30), border_style = kind == 2 ? line.style_dotted : line.style_solid,
-         bgcolor = color.new(base, kind == 2 ? 92 : 84), extend = extend.right, text = nm, text_size = size.tiny, text_color = color.new(base, 10), text_halign = text.align_right)
-    line ln = line.new(t0, mid, bar_index + 1, mid, extend = extend.right, color = color.new(base, 40), style = line.style_dotted)
-    array.push(zones, Zone.new(top = top, bot = bot, dir = dir, kind = kind, score = score, t0 = t0, cb = bar_index, ext = ext, used = false, bx = bx, mid = ln))
+    Zone z = Zone.new(top = top, bot = bot, dir = dir, kind = kind, score = score, t0 = t0, cb = bar_index, ext = ext, used = false)
+    if not cleanView or (kind < 2 and score >= cleanMinScore)
+        f_showZone(z, star)
+    array.push(zones, z)
     while array.size(zones) > maxZones
         f_removeZone(array.shift(zones))
     true
@@ -776,7 +793,7 @@ if not na(ph) or not na(pl)
                         if not na(q.ln)
                             line.set_width(q.ln, 2)
             line ln = na
-            if showLiq
+            if showLiq and (not cleanView or isEq)
                 ln := line.new(bar_index - swingN, px, bar_index, px, extend = extend.right, color = color.new(colLiq, isEq ? 20 : 55), width = isEq ? 2 : 1, style = line.style_dotted)
             if isEq and showLiq
                 label.new(bar_index - swingN, px, side == 1 ? "EQH" : "EQL", style = side == 1 ? label.style_label_down : label.style_label_up, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny)
@@ -827,7 +844,7 @@ if nLiq > 0
             else
                 sweepBull := true
                 lastSslSweep := bar_index
-            if showSweeps
+            if showSweeps and (not cleanView or l.eq or inNews)
                 label.new(bar_index, l.side == 1 ? high : low, (inNews ? "NEWS " : "") + (l.eq ? "EQ " : "") + how + (l.side == 1 ? " ↓" : " ↑"),
                      style = l.side == 1 ? label.style_label_down : label.style_label_up,
                      color = color.new(l.side == 1 ? colBear : colBull, 75), textcolor = l.side == 1 ? colBear : colBull, size = size.tiny)
@@ -926,9 +943,9 @@ plot(showMap ? prevDH : na, "Previous day high", color = dHiSw ? color.new(colLi
 plot(showMap ? prevDL : na, "Previous day low", color = dLoSw ? color.new(colLiq, 85) : color.new(colBull, 40), style = plot.style_linebr)
 plot(showMap ? prevWH : na, "Previous week high", color = wHiSw ? color.new(colLiq, 80) : color.new(colBear, 20), linewidth = 2, style = plot.style_linebr)
 plot(showMap ? prevWL : na, "Previous week low", color = wLoSw ? color.new(colLiq, 80) : color.new(colBull, 20), linewidth = 2, style = plot.style_linebr)
-plot(showMap ? prevMH : na, "Previous month high", color = mHiSw ? color.new(colLiq, 75) : color.new(colBear, 0), linewidth = 3, style = plot.style_linebr)
-plot(showMap ? prevML : na, "Previous month low", color = mLoSw ? color.new(colLiq, 75) : color.new(colBull, 0), linewidth = 3, style = plot.style_linebr)
-plot(showMap ? prevWMid : na, "Previous week 50%", color = color.new(colMSS, 60), style = plot.style_linebr)
+plot(showMap and not cleanView ? prevMH : na, "Previous month high", color = mHiSw ? color.new(colLiq, 75) : color.new(colBear, 0), linewidth = 3, style = plot.style_linebr)
+plot(showMap and not cleanView ? prevML : na, "Previous month low", color = mLoSw ? color.new(colLiq, 75) : color.new(colBull, 0), linewidth = 3, style = plot.style_linebr)
+plot(showMap and not cleanView ? prevWMid : na, "Previous week 50%", color = color.new(colMSS, 60), style = plot.style_linebr)
 
 // ───────────────────────── Fair value gaps ─────────────────────────
 // Episode 23: a Wyckoff spring / UTAD is just an AMD cycle inside a compressed range: one side is swept and
@@ -976,6 +993,8 @@ if (showFVG or modelOn) and fvgBull
             Zone lz = array.get(zones, array.size(zones) - 1)
             lz.fromModel := true
             lz.ext := modelExtBull
+            if na(lz.bx)
+                f_showZone(lz, false)
 if (showFVG or modelOn) and fvgBear
     float m = (high + low[2]) / 2
     int sc = 1 + f_loc(-1, m) + (recentBsl ? 1 : 0)
@@ -985,6 +1004,8 @@ if (showFVG or modelOn) and fvgBear
             Zone lz = array.get(zones, array.size(zones) - 1)
             lz.fromModel := true
             lz.ext := modelExtBear
+            if na(lz.bx)
+                f_showZone(lz, false)
 
 // ───────────────────────── Order blocks from structure breaks ─────────────────────────
 if bullBrk
@@ -1006,6 +1027,8 @@ if modelOn and bullBrk and not na(lastTagL) and bar_index - lastTagL <= tagLook 
             if fz.kind == 2 and fz.dir == 1 and fz.cb >= bullAnchor
                 fz.fromModel := true
                 fz.ext := legExt
+                if na(fz.bx)
+                    f_showZone(fz, false)
 if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook and (not reqDisp or f_disp(-1))
     mBearBrk := bar_index
     float legExt = high
@@ -1018,6 +1041,8 @@ if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook 
             if fz.kind == 2 and fz.dir == -1 and fz.cb >= bearAnchor
                 fz.fromModel := true
                 fz.ext := legExt
+                if na(fz.bx)
+                    f_showZone(fz, false)
 
 // ───────────────────────── Zone maintenance and setup signals ─────────────────────────
 var array<int>   trDir = array.new<int>()
@@ -1250,46 +1275,46 @@ if showDash and barstate.islast
     bool rrOK = not na(planRR) and planRR >= minRR
     string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inPM ? "NY afternoon" : inAsia ? "Asia" : "-")
 
-    table.cell(dash, 0, 0, "Top-down checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
-    table.cell(dash, 1, 0, syminfo.ticker + " | " + scaleMode, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
-    table.cell(dash, 0, 1, "1a Direction (" + dirTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 1, (not dirClear ? "Ranging" : dirTrend == 1 ? "Bullish" : dirTrend == -1 ? "Bearish" : "Range") + " " + f_tick(dirTrend != 0 and dirClear), text_color = not dirClear ? colLiq : dirTrend == 1 ? colBull : dirTrend == -1 ? colBear : colLiq, text_size = size.small)
-    table.cell(dash, 0, 2, "1b Sync (" + syncTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 2, syncTxt + " " + f_tick(syncTFOK), text_color = syncTFOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 3, "2 Location in range", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 3, locTxt + " " + f_tick(locOKd), text_color = locOKd ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 4, "2 Context POI (" + ctxTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 4, (poiExists ? "Marked" : "None") + " " + f_tick(poiExists), text_color = poiExists ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 5, "3 Price tagged POI", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 5, (poiTagged ? "Yes" : "Waiting") + " " + f_tick(poiTagged), text_color = poiTagged ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 6, "3 H4 / H1 confirmation", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 6, (dirC != 0 and syncTrend == dirC ? "Daily agrees" : dirC != 0 and ctxTrend == dirC ? "H4 flipped" : dirC != 0 and setupTrend == dirC ? "H1 flipped" : "Waiting") + " " + f_tick(confOK), text_color = confOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 7, modelOn ? "4 MSB + disp + FVG" : "4 Chart MSB + zone", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 7, (na(bz) ? "No zone" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 8, "Reward : risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 8, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R, break-even " + str.tostring(100 / (1 + planRR), "#") + "%") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 9, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 9, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
+    table.cell(dash, 0, 0, "Top-down checklist", text_color = color.white, text_size = dashTxt, bgcolor = color.new(colLiq, 60))
+    table.cell(dash, 1, 0, syminfo.ticker + " | " + scaleMode, text_color = color.white, text_size = dashTxt, bgcolor = color.new(colLiq, 60))
+    table.cell(dash, 0, 1, "1a Direction (" + dirTF + ")", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 1, (not dirClear ? "Ranging" : dirTrend == 1 ? "Bullish" : dirTrend == -1 ? "Bearish" : "Range") + " " + f_tick(dirTrend != 0 and dirClear), text_color = not dirClear ? colLiq : dirTrend == 1 ? colBull : dirTrend == -1 ? colBear : colLiq, text_size = dashTxt)
+    table.cell(dash, 0, 2, "1b Sync (" + syncTF + ")", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 2, syncTxt + " " + f_tick(syncTFOK), text_color = syncTFOK ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 3, "2 Location in range", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 3, locTxt + " " + f_tick(locOKd), text_color = locOKd ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 4, "2 Context POI (" + ctxTF + ")", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 4, (poiExists ? "Marked" : "None") + " " + f_tick(poiExists), text_color = poiExists ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 5, "3 Price tagged POI", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 5, (poiTagged ? "Yes" : "Waiting") + " " + f_tick(poiTagged), text_color = poiTagged ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 6, "3 H4 / H1 confirmation", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 6, (dirC != 0 and syncTrend == dirC ? "Daily agrees" : dirC != 0 and ctxTrend == dirC ? "H4 flipped" : dirC != 0 and setupTrend == dirC ? "H1 flipped" : "Waiting") + " " + f_tick(confOK), text_color = confOK ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 7, modelOn ? "4 MSB + disp + FVG" : "4 Chart MSB + zone", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 7, (na(bz) ? "No zone" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 8, "Reward : risk", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 8, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R, break-even " + str.tostring(100 / (1 + planRR), "#") + "%") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 9, "Session", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 9, sess, text_color = inKZ ? colNY : colLiq, text_size = dashTxt)
     bool chased = not na(lastChase) and bar_index - lastChase <= 30
     string dq = dirC == 0 ? "1 No clear bias" : not locOKd ? "2 Wrong zone" : not rrOK ? "3 No target / under " + str.tostring(minRR, "#.#") + "R" : not modelOK ? "4 Model incomplete" : chased ? "5 Missed entry (no chase)" : inNews ? "6 News window" : tiltBlocked ? "7 Tilt guard" : capHit ? "8 Daily signal cap" : "None"
     bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK and not inNews and not tiltBlocked and not capHit
-    table.cell(dash, 0, 10, "No-trade filter", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = size.small)
-    table.cell(dash, 0, 12, "Size at " + str.tostring(f_riskPct(dirC), "#.##") + "% risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")" + (f_riskPct(dirC) > 2 ? " - above 2%, oversizing risk" : ""), text_color = f_riskPct(dirC) > 2 ? colBear : color.white, text_size = size.small)
+    table.cell(dash, 0, 10, "No-trade filter", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = dashTxt)
+    table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = dashTxt)
+    table.cell(dash, 0, 12, "Size at " + str.tostring(f_riskPct(dirC), "#.##") + "% risk", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")" + (f_riskPct(dirC) > 2 ? " - above 2%, oversizing risk" : ""), text_color = f_riskPct(dirC) > 2 ? colBear : color.white, text_size = dashTxt)
     string grade = dirC != 0 ? f_grade(dirC) : "-"
-    table.cell(dash, 0, 13, "Range stack W/D/4H/1H", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 13, f_letter(dirHi, dirLo) + " " + f_letter(syncHi, syncLo) + " " + f_letter(ctxHi, ctxLo) + " " + f_letter(setupHi, setupLo) + "  grade " + grade, text_color = grade == "A+" or grade == "A" ? colBull : colLiq, text_size = size.small)
+    table.cell(dash, 0, 13, "Range stack W/D/4H/1H", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 13, f_letter(dirHi, dirLo) + " " + f_letter(syncHi, syncLo) + " " + f_letter(ctxHi, ctxLo) + " " + f_letter(setupHi, setupLo) + "  grade " + grade, text_color = grade == "A+" or grade == "A" ? colBull : colLiq, text_size = dashTxt)
     bool smtSeen = dirC == 1 ? (not na(lastSmtBull) and bar_index - lastSmtBull <= smtLook) : dirC == -1 ? (not na(lastSmtBear) and bar_index - lastSmtBear <= smtLook) : false
-    table.cell(dash, 0, 14, "SMT vs " + (useSMT ? str.tostring(smtSym) : "off"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 14, not useSMT ? "off" : smtSeen ? "Divergence (grade up)" : "None (optional)", text_color = smtSeen ? colBull : colLiq, text_size = size.small)
+    table.cell(dash, 0, 14, "SMT vs " + (useSMT ? str.tostring(smtSym) : "off"), text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 14, not useSMT ? "off" : smtSeen ? "Divergence (grade up)" : "None (optional)", text_color = smtSeen ? colBull : colLiq, text_size = dashTxt)
     string biasTxt = noBiasDay ? "No-bias day (mid close)" : dailyBias == 1 ? "Bullish" : dailyBias == -1 ? "Bearish" : "Unclear"
-    table.cell(dash, 0, 15, "Daily bias (ep 22)", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 15, biasTxt + " | draw " + (drawDir == 1 ? "up" : drawDir == -1 ? "down" : "-") + ", close " + (na(closePos) ? "n/a" : str.tostring(closePos * 100, "#") + "%"), text_color = dailyBias == 1 ? colBull : dailyBias == -1 ? colBear : colLiq, text_size = size.small)
-    table.cell(dash, 0, 16, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
-    table.cell(dash, 1, 16, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 0, 15, "Daily bias (ep 22)", text_color = color.white, text_size = dashTxt, text_halign = text.align_left)
+    table.cell(dash, 1, 15, biasTxt + " | draw " + (drawDir == 1 ? "up" : drawDir == -1 ? "down" : "-") + ", close " + (na(closePos) ? "n/a" : str.tostring(closePos * 100, "#") + "%"), text_color = dailyBias == 1 ? colBull : dailyBias == -1 ? colBear : colLiq, text_size = dashTxt)
+    table.cell(dash, 0, 16, "Take the trade?", text_color = color.white, text_size = dashTxt, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 16, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = dashTxt, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")

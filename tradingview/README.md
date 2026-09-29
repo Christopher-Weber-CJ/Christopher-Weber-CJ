@@ -40,6 +40,14 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 25 | Where traders fail: oversizing, lottery brain, no measurement, overtrading, revenge trading, system hopping, quitting, complacency | Guard-rails only. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
+## Reading the chart (Display settings)
+
+The framework draws a lot, so *Chart view* defaults to **Clean**:
+- **Shown:** the dashboard, the chart dealing range (high, low, EQ and the OTE zone), the context-timeframe POI, the 5-minute-model entry zones (drawn once a qualifying structure break claims them), order blocks / breakers scoring at least 5, equal-high / equal-low liquidity lines, sweeps of those or during news, structure breaks that are reversals or have displacement, Judas / SMT / range-AMD markers, the previous day and week highs and lows, and the last few trade plans.
+- **Hidden until you switch to Full:** plain swing-liquidity lines, most sweep and structure labels, premium / discount shading, the sync and direction range lines, the month levels and previous-week midpoint, daily / weekly opens, Monday range, the Asia box, and the afternoon / silver bullet shading.
+- *Dashboard text size* makes the checklist larger. To clear the row of input values at the top-left of the pane, open the indicator's Settings, then Status line, and untick Inputs.
+- Everything still runs in Clean view. Hidden items are only not drawn, so signals, grades and the dashboard are the same in both views.
+
 ## Setup logic
 
 Put the indicator on your **execution** timeframe (for example 5m). The defaults follow his examples:
