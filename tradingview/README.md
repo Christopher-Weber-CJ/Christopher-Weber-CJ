@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.2, built from episodes 1-13 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.3, built from episodes 1-14 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -26,6 +26,7 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 9 | OTE 61.8 - 78.6 (ICT 62 / 79), sweet spot 70.5 | OTE band and sweet-spot line. A zone inside the OTE gets a score point. |
 | 12 | Four-step top-down process: weekly + daily direction, H4 context, H1 setup, M5 entry. Stop beyond the H4 POI, targets from the higher timeframes. | Direction (W) and sync (D) timeframes, context (H4) POIs plotted, zone must sit inside a context POI, stop beyond that POI, target = nearest equal high/low or higher-timeframe range extreme paying at least minRR. |
 | 13 | Five-minute model: zone tag, 5m structure break, displacement, FVG pullback entry, stop beyond the 5m swing (or the HTF zone), HTF targets, minimum 2R | Default entry model. See below. |
+| 14 | Reversal vs continuation setups, H4 / H1 confirmation before the model, 15-minute model = same model on a higher chart, silver bullet windows | Reversal / continuation labels and stop rule, confirmation gate, silver bullet windows. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -46,17 +47,24 @@ weekly + daily → H4 → (H1: wait) → 5m.
 5. The stop goes beyond the chart swing before the break (default). The alternative, beyond the context POI, is his safer choice for reversals. The target is the nearest equal high / low or daily / weekly range extreme that pays at least the minimum reward:risk (default 2R).
 
 No zone tag, no displacement, or under 2R means no signal. The dashboard shows which step is missing.
+**Reversal vs continuation and confirmation (episode 14).**
+- If the daily already agrees with the weekly, the setup is a **continuation** (`CONT`). The stop defaults to the chart swing before the break (tight).
+- If the daily still disagrees, it is a **reversal** (`REV`). It only fires after the H4 or H1 has flipped in the trade direction (structure break), and the stop defaults to beyond the context POI (wider, smaller size). Turn *Allow reversal setups* off to wait for the daily instead.
+- Stop = *Auto* applies those two rules. It can be forced to the chart swing, the context POI or the zone edge.
+- The **15-minute model** is the same model: run the indicator on a 15m chart. The same works on 1h.
+- **Silver bullet:** the three windows (03:00-04:00, 10:00-11:00, 14:00-15:00 New York time) are shaded, and signals inside them are tagged `SB`. *Only trade inside a silver bullet window* makes them a filter. Turn on *Require a recent liquidity sweep* to match his "sweep, break, FVG" description.
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 14-25, not read yet)
+## Not yet implemented (episodes 15-25, not read yet)
 
-Episodes 14-25 are: the 15-minute model and silver bullet, wrong-timeframe fix, when to walk away,
+Episodes 15-25 are: when to walk away (the no-trade checklist), losing trades and win rate,
 losing trades and win rate, scaling, news trading, advanced dealing ranges, kill zones, SMT divergence,
 liquidity trap and learning liquidity, and best-trade breakdown.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-13 were supplied by hand. Episodes 14-25 are **not** in the script yet.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-14 were supplied by hand. Episodes 15-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
 
