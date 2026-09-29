@@ -75,8 +75,8 @@ The 1-hour step is a "wait" step, so it has no separate setting. The context POI
 ## Not yet implemented (episodes 16-25, not read yet)
 
 Episodes 16-25 are: risk management (stops, profit-taking, RR), the scaling strategy,
-losing trades and win rate, scaling, news trading, advanced dealing ranges, kill zones, SMT divergence,
-liquidity trap and learning liquidity, and best-trade breakdown.
+news trading, advanced dealing ranges, kill zones, SMT divergence,
+liquidity trap and learning liquidity, best-trade breakdown, and trading psychology.
 YouTube rate-limited transcript downloads after episode 11. Episodes 12-15 were supplied by hand. Episodes 16-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
