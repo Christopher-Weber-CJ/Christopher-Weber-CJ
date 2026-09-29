@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.1, built from episodes 1-12 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.2, built from episodes 1-13 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -25,30 +25,38 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 8 | Filters: location, context, quality, RR, LTF confirmation. OB + FVG overlap is best. | Location and score gating. `★` marks an OB overlapping an FVG. |
 | 9 | OTE 61.8 - 78.6 (ICT 62 / 79), sweet spot 70.5 | OTE band and sweet-spot line. A zone inside the OTE gets a score point. |
 | 12 | Four-step top-down process: weekly + daily direction, H4 context, H1 setup, M5 entry. Stop beyond the H4 POI, targets from the higher timeframes. | Direction (W) and sync (D) timeframes, context (H4) POIs plotted, zone must sit inside a context POI, stop beyond that POI, target = nearest equal high/low or higher-timeframe range extreme paying at least minRR. |
+| 13 | Five-minute model: zone tag, 5m structure break, displacement, FVG pullback entry, stop beyond the 5m swing (or the HTF zone), HTF targets, minimum 2R | Default entry model. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
-## Setup logic (the four-step process, episode 12)
+## Setup logic
 
-Put the indicator on the **execution** timeframe (for example 5m). The defaults follow his example:
+Put the indicator on your **execution** timeframe (for example 5m). The defaults follow his examples:
 weekly + daily → H4 → (H1: wait) → 5m.
 
-1. **Direction / sync.** Weekly structure sets bias. The daily must agree with it. If the daily is still pulling back against the weekly, the dashboard says *Wait* and there are no signals.
-2. **Context.** Premium / discount is measured in the daily range. The H4 order block or fair value gap that is still live is drawn as a shaded context POI.
-3. **Setup.** Wait for price to tag that context POI (the dashboard shows *Waiting* until it has).
-4. **Entry.** On the chart timeframe, a structure break in the bias direction leaves an OB, breaker or FVG inside the context POI. A retest that closes above (longs) or below (shorts) the zone's 50% fires the signal.
+**Top-down (episode 12).**
+1. Weekly structure sets bias. The daily must agree with it. If the daily is still pulling back against the weekly, the dashboard says *Wait* and there are no signals.
+2. Premium / discount is measured in the daily range. The live H4 order block or fair value gap is drawn as a shaded context POI.
+3. Wait for price to tag that context POI.
 
-The stop goes beyond the context POI, because the idea is wrong there. Targets come from the higher timeframes:
-the nearest equal high / low, then the daily and weekly range extremes, taking the nearest one that pays at least the minimum reward:risk (default 2R).
-Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias, and switching off the context-POI requirement.
+**Five-minute model (episode 13, the default entry model).** All five steps must happen in order:
+1. Price **trades into** the context POI (overlapping it, not just near it).
+2. The chart timeframe breaks structure in the trade direction after the tag (a bullish break of the last lower high for longs).
+3. The break comes with a **displacement** candle (body of at least 1.2 ATR by default).
+4. The displacement leaves a **fair value gap** (created during the leg or within 3 bars after the break). Enter on the pullback: the signal fires when price retests it and closes past its 50%. Each new qualifying break can give a new entry.
+5. The stop goes beyond the chart swing before the break (default). The alternative, beyond the context POI, is his safer choice for reversals. The target is the nearest equal high / low or daily / weekly range extreme that pays at least the minimum reward:risk (default 2R).
+
+No zone tag, no displacement, or under 2R means no signal. The dashboard shows which step is missing.
+Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
+Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 13-25, not read yet)
+## Not yet implemented (episodes 14-25, not read yet)
 
-Episodes 13-25 are: the entry model, wrong-timeframe fix, when to walk away,
+Episodes 14-25 are: the 15-minute model and silver bullet, wrong-timeframe fix, when to walk away,
 losing trades and win rate, scaling, news trading, advanced dealing ranges, kill zones, SMT divergence,
 liquidity trap and learning liquidity, and best-trade breakdown.
-YouTube rate-limited transcript downloads after episode 11. Episode 12 was supplied by hand. Episodes 13-25 are **not** in the script yet.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-13 were supplied by hand. Episodes 14-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
 

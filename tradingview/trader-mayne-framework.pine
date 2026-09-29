@@ -1,8 +1,9 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-12: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-13: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
-// and the four-step top-down process (direction -> context -> setup -> entry).
+// the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
+// entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -66,9 +67,12 @@ showMonday = input.bool(true, "Plot Monday high / low", group = G_SES)
 
 G_ENT = "Entry model"
 enableSig   = input.bool(true, "Enable setup signals", group = G_ENT)
-minScoreEnt = input.int(3, "Minimum zone score to trade", minval = 0, maxval = 7, group = G_ENT)
+entryModel  = input.string("5-minute model (FVG)", "Entry model", options = ["5-minute model (FVG)", "OB / breaker / FVG (general)"], tooltip = "5-minute model (episode 13): higher-timeframe zone tagged -> structure break with displacement -> enter on the pullback into the FVG it left. General: score-filtered order blocks, breakers and FVGs.", group = G_ENT)
+tagLook     = input.int(80, "5m model: zone tag must be within (bars) of the break", minval = 5, maxval = 1000, group = G_ENT)
+reqDisp     = input.bool(true, "5m model: require a displacement candle with the break", group = G_ENT)
+minScoreEnt = input.int(3, "General model: minimum zone score to trade", minval = 0, maxval = 7, group = G_ENT)
 entryMode   = input.string("Zone edge", "Entry at", options = ["Zone edge", "50% mean", "Bar close"], group = G_ENT)
-stopMode    = input.string("Context POI", "Stop beyond", options = ["Zone edge", "Zone extreme", "Context POI"], tooltip = "Context POI = beyond the context-timeframe POI the setup formed in (his method: the idea is wrong there, and targets come from the higher timeframes). Zone extreme = the sweep / leg extreme behind the zone. Zone edge = tightest stop.", group = G_ENT)
+stopMode    = input.string("Zone extreme", "Stop beyond", options = ["Zone edge", "Zone extreme", "Context POI"], tooltip = "Zone extreme = the chart swing / leg extreme before the structure break (the 5-minute model's default stop). Context POI = beyond the higher-timeframe POI, his alternative for reversals (wider stop, smaller size). Zone edge = tightest stop.", group = G_ENT)
 slBuf       = input.float(0.1, "Stop buffer (ATR ×)", minval = 0.0, step = 0.05, group = G_ENT)
 minRR       = input.float(2.0, "Minimum reward : risk", minval = 0.5, step = 0.25, group = G_ENT)
 allowCtr    = input.bool(false, "Allow trades against HTF bias", group = G_ENT)
@@ -92,6 +96,8 @@ colLiq  = input.color(#b2b5be, "Liquidity", group = G_COL)
 colAsia = input.color(#9c27b0, "Asia", group = G_COL)
 colLon  = input.color(#2196f3, "London", group = G_COL)
 colNY   = input.color(#ffb300, "New York", group = G_COL)
+
+bool modelOn = entryModel == "5-minute model (FVG)"
 
 // ───────────────────── Higher-timeframe structure ─────────────────────
 // Runs inside request.security on series shifted by one bar, so the HTF values never use the
@@ -378,6 +384,7 @@ type Zone
     int   t0       // left-most bar of the zone
     int   cb       // bar the zone was created on
     float ext      // sweep / leg extreme behind the zone (stop reference)
+    bool  mod      // FVG left by a qualified 5-minute-model structure break
     bool  used
     box   bx
     line  mid
@@ -410,6 +417,14 @@ f_loc(int dir, float mid) =>
         if ret >= oteLo and ret <= oteHi
             s += 1
     s
+
+f_disp(int dir) =>
+    float need = dispMult * atr
+    bool ok = false
+    for i = 0 to 2
+        if (dir == 1 and close[i] - open[i] >= need) or (dir == -1 and open[i] - close[i] >= need)
+            ok := true
+    ok
 
 f_removeZone(Zone z) =>
     box.delete(z.bx)
@@ -629,24 +644,71 @@ bool recentSsl = not na(lastSslSweep) and bar_index - lastSslSweep <= sweepLook
 bool recentBsl = not na(lastBslSweep) and bar_index - lastBslSweep <= sweepLook
 
 // ───────────────────────── Fair value gaps ─────────────────────────
+// Step 1 of the 5-minute model: price must trade INTO the context-timeframe POI, not just near it.
+var int lastTagL = na
+var int lastTagS = na
+var int mBullBrk = na
+var int mBearBrk = na
+var float modelExtBull = na
+var float modelExtBear = na
+if not na(ctxBullTop) and low <= ctxBullTop and high >= ctxBullBot
+    lastTagL := bar_index
+if not na(ctxBearTop) and high >= ctxBearBot and low <= ctxBearTop
+    lastTagS := bar_index
+
 bool fvgBull = low > high[2] and close[1] > open[1] and (close[1] - open[1]) >= dispMult * atr[1] and (low - high[2]) >= fvgMin * atr
 bool fvgBear = high < low[2] and close[1] < open[1] and (open[1] - close[1]) >= dispMult * atr[1] and (low[2] - high) >= fvgMin * atr
-if showFVG and fvgBull
+if (showFVG or modelOn) and fvgBull
     float m = (low + high[2]) / 2
     int sc = 1 + f_loc(1, m) + (recentSsl ? 1 : 0)
-    if sc >= minShow
+    if sc >= minShow or modelOn
         f_addZone(low, high[2], 1, 2, sc, bar_index - 2, low[2], false)
-if showFVG and fvgBear
+        if modelOn and not na(mBullBrk) and bar_index - mBullBrk <= 3
+            Zone lz = array.get(zones, array.size(zones) - 1)
+            lz.mod := true
+            lz.ext := modelExtBull
+if (showFVG or modelOn) and fvgBear
     float m = (high + low[2]) / 2
     int sc = 1 + f_loc(-1, m) + (recentBsl ? 1 : 0)
-    if sc >= minShow
+    if sc >= minShow or modelOn
         f_addZone(low[2], high, -1, 2, sc, bar_index - 2, high[2], false)
+        if modelOn and not na(mBearBrk) and bar_index - mBearBrk <= 3
+            Zone lz = array.get(zones, array.size(zones) - 1)
+            lz.mod := true
+            lz.ext := modelExtBear
 
 // ───────────────────────── Order blocks from structure breaks ─────────────────────────
 if bullBrk
     f_createOB(1, bullAnchor)
 if bearBrk
     f_createOB(-1, bearAnchor)
+
+// Steps 2-3 of the 5-minute model: structure break in the trade direction, after the zone tag,
+// with displacement. The FVG it leaves (created since the broken swing, or within 3 bars after) is the entry.
+if modelOn and bullBrk and not na(lastTagL) and bar_index - lastTagL <= tagLook and (not reqDisp or f_disp(1))
+    mBullBrk := bar_index
+    float legExt = low
+    for i = 0 to math.min(bar_index - bullAnchor, 400)
+        legExt := math.min(legExt, low[i])
+    modelExtBull := legExt
+    if array.size(zones) > 0
+        for k = 0 to array.size(zones) - 1
+            Zone fz = array.get(zones, k)
+            if fz.kind == 2 and fz.dir == 1 and fz.cb >= bullAnchor
+                fz.mod := true
+                fz.ext := legExt
+if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook and (not reqDisp or f_disp(-1))
+    mBearBrk := bar_index
+    float legExt = high
+    for i = 0 to math.min(bar_index - bearAnchor, 400)
+        legExt := math.max(legExt, high[i])
+    modelExtBear := legExt
+    if array.size(zones) > 0
+        for k = 0 to array.size(zones) - 1
+            Zone fz = array.get(zones, k)
+            if fz.kind == 2 and fz.dir == -1 and fz.cb >= bearAnchor
+                fz.mod := true
+                fz.ext := legExt
 
 // ───────────────────────── Zone maintenance and setup signals ─────────────────────────
 bool kzOK     = not reqKZ or inKZ
@@ -677,22 +739,26 @@ if nZ > 0
                 kill := true
             if z.dir == -1 and close > z.top
                 kill := true
+            if z.kind == 2 and modelOn and not showFVG and not z.mod and bar_index - z.cb > 60
+                kill := true
+        bool modelZone = modelOn and z.kind == 2 and z.mod
+        bool generalZone = not modelOn and z.score >= minScoreEnt and (z.kind < 2 or fvgEntries)
         if kill
             f_removeZone(z)
             array.remove(zones, i)
-        else if enableSig and barstate.isconfirmed and not z.used and bar_index > z.cb and z.score >= minScoreEnt and (z.kind < 2 or fvgEntries)
+        else if enableSig and barstate.isconfirmed and not z.used and bar_index > z.cb and (modelZone or generalZone)
             float mid = (z.top + z.bot) / 2
             float trig = entryMode == "50% mean" ? mid : (z.dir == 1 ? z.top : z.bot)
             if z.dir == 1 and (allowCtr or biasDir == 1) and (not reqSync or trend == 1)
                 bool touched = low <= trig and close >= mid
-                bool locOK = not reqPD or (not na(pdMid) and mid < pdMid)
-                bool poiOK = not reqPOI or (not na(ctxBullTop) and z.bot <= ctxBullTop and z.top >= ctxBullBot)
+                bool locOK = modelZone or not reqPD or (not na(pdMid) and mid < pdMid)
+                bool poiOK = modelZone or not reqPOI or (not na(ctxBullTop) and z.bot <= ctxBullTop and z.top >= ctxBullBot)
                 if touched and locOK and poiOK and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
                     bestL := z
             if z.dir == -1 and (allowCtr or biasDir == -1) and (not reqSync or trend == -1)
                 bool touched = high >= trig and close <= mid
-                bool locOK = not reqPD or (not na(pdMid) and mid > pdMid)
-                bool poiOK = not reqPOI or (not na(ctxBearTop) and z.top >= ctxBearBot and z.bot <= ctxBearTop)
+                bool locOK = modelZone or not reqPD or (not na(pdMid) and mid > pdMid)
+                bool poiOK = modelZone or not reqPOI or (not na(ctxBearTop) and z.top >= ctxBearBot and z.bot <= ctxBearTop)
                 if touched and locOK and poiOK and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
                     bestS := z
 
@@ -751,7 +817,8 @@ if showDash and barstate.islast
     if dirC != 0 and array.size(zones) > 0
         for k = 0 to array.size(zones) - 1
             Zone zz = array.get(zones, k)
-            if zz.dir == dirC and zz.score >= minScoreEnt and (zz.kind < 2 or fvgEntries) and (na(bz) or zz.score > bz.score)
+            bool okZ = modelOn ? (zz.kind == 2 and zz.mod) : (zz.score >= minScoreEnt and (zz.kind < 2 or fvgEntries))
+            if zz.dir == dirC and okZ and (na(bz) or zz.score > bz.score)
                 bz := zz
     bool modelOK = not na(bz) and trend == dirC
     float planRR = na
@@ -773,7 +840,7 @@ if showDash and barstate.islast
     table.cell(dash, 1, 4, (poiExists ? "Marked" : "None") + " " + f_tick(poiExists), text_color = poiExists ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 5, "3 Price tagged POI", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 5, (poiTagged ? "Yes" : "Waiting") + " " + f_tick(poiTagged), text_color = poiTagged ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 6, "4 Chart MSB + zone", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 0, 6, modelOn ? "4 MSB + disp + FVG" : "4 Chart MSB + zone", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 6, (na(bz) ? "No zone" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 7, "Reward : risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 7, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
