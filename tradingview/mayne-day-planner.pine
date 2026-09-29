@@ -1,0 +1,408 @@
+//@version=6
+// Mayne Day Planner: companion to the Trader Mayne framework for intraday trading against a forced-flat time.
+// Built from the whiteboard series: the daily AMD cycle (episodes 10 and 20: Asian accumulation, a sweep /
+// Judas swing, distribution), the daily-bias checklist (episode 22), the liquidity map (episodes 3, 4 and 22),
+// kill zones and silver bullets (episodes 14 and 20), and the risk framework (episodes 16 and 25).
+// It is a planning card, not a signal generator. Use it beside the main indicator.
+indicator("Mayne Day Planner", shorttitle = "MDP", overlay = true, max_boxes_count = 50, max_lines_count = 100, max_labels_count = 50)
+
+// ───────────────────────────── Inputs ─────────────────────────────
+G_CLK = "Clock and sessions"
+tz         = input.string("America/Denver", "Timezone (Mountain by default)", group = G_CLK)
+flatH      = input.int(14, "Forced flat: hour (24h)", minval = 0, maxval = 23, group = G_CLK)
+flatM      = input.int(45, "Forced flat: minute", minval = 0, maxval = 59, group = G_CLK)
+reopenH    = input.int(16, "Trading resumes: hour", minval = 0, maxval = 23, group = G_CLK)
+noEntryMin = input.int(45, "No new entries in the last N minutes before flat", minval = 0, maxval = 600, group = G_CLK)
+asiaS      = input.session("1800-2200", "Asia (accumulation)", group = G_CLK)
+lonS       = input.session("0000-0300", "London kill zone", group = G_CLK)
+nyS        = input.session("0500-0800", "New York kill zone", group = G_CLK)
+sbA        = input.session("0100-0200", "Silver bullet 1", group = G_CLK)
+sbB        = input.session("0800-0900", "Silver bullet 2", group = G_CLK)
+sbC        = input.session("1200-1300", "Silver bullet 3", group = G_CLK)
+
+G_AMD = "Daily AMD tracker"
+dispMult    = input.float(1.2, "Displacement: candle body at least this many ATR", minval = 0.1, step = 0.1, group = G_AMD)
+atrLen      = input.int(14, "ATR length", minval = 1, group = G_AMD)
+reclaimBars = input.int(6, "A sweep must be reclaimed within (bars)", minval = 1, maxval = 60, group = G_AMD)
+dispWindow  = input.int(12, "Displacement must follow the reclaim within (bars)", minval = 1, maxval = 100, group = G_AMD)
+
+G_BIAS = "Daily bias (episode 22)"
+closeEdge  = input.float(0.10, "Yesterday's close counts as 'at the extreme' inside this fraction of its range", minval = 0.02, maxval = 0.4, step = 0.01, group = G_BIAS)
+earlyHours = input.float(8, "A sweep is 'early' within this many hours of the daily open", minval = 1, maxval = 23, group = G_BIAS)
+
+G_PROP = "Prop budget (enter your firm's numbers)"
+acct           = input.float(50000, "Account size ($)", minval = 1, group = G_PROP)
+riskPct        = input.float(1.0, "Risk per trade (% of account)", minval = 0.05, maxval = 10, step = 0.05, group = G_PROP)
+pointValue     = input.float(5.0, "Point value in $ (MES 5, ES 50, MNQ 2, NQ 20)", minval = 0.0, group = G_PROP)
+maxContracts   = input.int(10, "Maximum contracts", minval = 1, group = G_PROP)
+dailyLossLimit = input.float(0, "Daily loss limit ($, 0 = off)", minval = 0.0, group = G_PROP)
+todayPnL       = input.float(0, "Today's realized P&L ($): update as you trade", step = 10, group = G_PROP)
+ddRoom         = input.float(0, "Room left to your max drawdown ($, 0 = off)", minval = 0.0, group = G_PROP)
+bufferFrac     = input.float(0.5, "Never risk more than this fraction of the remaining daily / drawdown room on one trade", minval = 0.05, maxval = 1.0, step = 0.05, group = G_PROP)
+
+G_CALC = "Risk calculator"
+calcEntry = input.price(0.0, "Entry price (0 = off)", group = G_CALC)
+calcStop  = input.price(0.0, "Stop price", group = G_CALC)
+
+G_LNK = "Link to the main indicator"
+useMain = input.bool(false, "Read signals from the main framework indicator", tooltip = "Turn on, then choose the main indicator's four 'Export' plots in the sources below.", group = G_LNK)
+srcDir  = input.source(close, "Export: signal (1 long, -1 short)", group = G_LNK)
+srcEn   = input.source(close, "Export: entry", group = G_LNK)
+srcSl   = input.source(close, "Export: stop", group = G_LNK)
+srcTg   = input.source(close, "Export: target", group = G_LNK)
+
+G_VIEW = "Display"
+showCard   = input.bool(true, "Show the plan card", group = G_VIEW)
+cardPos    = input.string(position.top_left, "Card position", options = [position.top_right, position.middle_right, position.bottom_right, position.top_left, position.middle_left, position.bottom_left], group = G_VIEW)
+cardSize   = input.string("normal", "Card text size", options = ["tiny", "small", "normal", "large"], group = G_VIEW)
+showLevels = input.bool(true, "Plot previous day / week highs and lows and the daily open", group = G_VIEW)
+showBoxes  = input.bool(true, "Draw the Asia and London range boxes", group = G_VIEW)
+showBg     = input.bool(true, "Shade the active kill zone and the flat period", group = G_VIEW)
+
+colBull = input.color(#26a69a, "Bullish", group = G_VIEW)
+colBear = input.color(#ef5350, "Bearish", group = G_VIEW)
+colAsia = input.color(#9c27b0, "Asia", group = G_VIEW)
+colLon  = input.color(#2196f3, "London", group = G_VIEW)
+colNY   = input.color(#ffb300, "New York", group = G_VIEW)
+colLiq  = input.color(#b2b5be, "Neutral", group = G_VIEW)
+
+// ───────────────────────────── Core series ─────────────────────────────
+bool isIntra = timeframe.isintraday
+atr = ta.atr(atrLen)
+bool newDay  = ta.change(time("D")) != 0
+bool newWeek = ta.change(time("W")) != 0
+cardTxt = cardSize == "tiny" ? size.tiny : cardSize == "small" ? size.small : cardSize == "large" ? size.large : size.normal
+
+bool inAsia = isIntra and not na(time(timeframe.period, asiaS, tz))
+bool inLon  = isIntra and not na(time(timeframe.period, lonS, tz))
+bool inNY   = isIntra and not na(time(timeframe.period, nyS, tz))
+bool inSB   = isIntra and (not na(time(timeframe.period, sbA, tz)) or not na(time(timeframe.period, sbB, tz)) or not na(time(timeframe.period, sbC, tz)))
+
+// Forced-flat clock
+int mOfDay = hour(time, tz) * 60 + minute(time, tz)
+int flatAt = flatH * 60 + flatM
+int reopenAt = reopenH * 60
+bool blackout = isIntra and mOfDay >= flatAt and mOfDay < reopenAt
+int minsToFlat = na
+int minsToOpen = na
+if isIntra
+    if mOfDay < flatAt
+        minsToFlat := flatAt - mOfDay
+    else if mOfDay >= reopenAt
+        minsToFlat := (1440 - mOfDay) + flatAt
+    if blackout
+        minsToOpen := reopenAt - mOfDay
+bool nearFlat = isIntra and (blackout or (not na(minsToFlat) and minsToFlat <= noEntryMin))
+
+bgcolor(showBg and blackout ? color.new(color.gray, 85) : showBg and inLon ? color.new(colLon, 93) : showBg and inNY ? color.new(colNY, 93) : na, title = "Flat period / kill zone")
+
+// ───────────────────────────── Session ranges ─────────────────────────────
+var float asiaHi = na
+var float asiaLo = na
+var float lonHi = na
+var float lonLo = na
+var bool asiaHiSw = false
+var bool asiaLoSw = false
+var bool lonHiSw = false
+var bool lonLoSw = false
+var box asiaBx = na
+var box lonBx = na
+bool newAsia = inAsia and not inAsia[1]
+bool newLon = inLon and not inLon[1]
+
+if newDay
+    asiaHi := na
+    asiaLo := na
+    lonHi := na
+    lonLo := na
+    asiaHiSw := false
+    asiaLoSw := false
+    lonHiSw := false
+    lonLoSw := false
+
+if newAsia
+    asiaHi := high
+    asiaLo := low
+    if showBoxes
+        asiaBx := box.new(bar_index, high, bar_index, low, border_color = color.new(colAsia, 40), bgcolor = color.new(colAsia, 90), text = "Asia", text_size = size.small, text_color = color.new(colAsia, 20), text_halign = text.align_left)
+else if inAsia
+    asiaHi := math.max(asiaHi, high)
+    asiaLo := math.min(asiaLo, low)
+else if not na(asiaHi)
+    if high > asiaHi
+        asiaHiSw := true
+    if low < asiaLo
+        asiaLoSw := true
+
+if newLon
+    lonHi := high
+    lonLo := low
+    if showBoxes
+        lonBx := box.new(bar_index, high, bar_index, low, border_color = color.new(colLon, 40), bgcolor = color.new(colLon, 90), text = "London", text_size = size.small, text_color = color.new(colLon, 20), text_halign = text.align_left)
+else if inLon
+    lonHi := math.max(lonHi, high)
+    lonLo := math.min(lonLo, low)
+else if not na(lonHi)
+    if high > lonHi
+        lonHiSw := true
+    if low < lonLo
+        lonLoSw := true
+
+if showBoxes and not blackout
+    if not na(asiaBx) and not na(asiaHi)
+        box.set_top(asiaBx, asiaHi)
+        box.set_bottom(asiaBx, asiaLo)
+        box.set_right(asiaBx, bar_index)
+    if not na(lonBx) and not na(lonHi)
+        box.set_top(lonBx, lonHi)
+        box.set_bottom(lonBx, lonLo)
+        box.set_right(lonBx, bar_index)
+
+// ───────────────────────────── Daily AMD tracker ─────────────────────────────
+// Accumulation = the Asian range. Manipulation = a sweep of one side that closes back inside (Judas swing).
+// Distribution = displacement in the opposite direction after the reclaim.
+var int   sweepDir = 0
+var int   sweepBar = na
+var bool  reclaimed = false
+var int   reclaimBar = na
+var bool  dist = false
+var int   distDir = 0
+var bool  brokeOut = false
+if newDay
+    sweepDir := 0
+    sweepBar := na
+    reclaimed := false
+    reclaimBar := na
+    dist := false
+    distDir := 0
+    brokeOut := false
+
+bool asiaDone = not na(asiaHi) and not inAsia
+bool evSweep = false
+bool evReclaim = false
+bool evDist = false
+if asiaDone and sweepDir == 0 and not brokeOut
+    bool upBrk = high > asiaHi
+    bool dnBrk = low < asiaLo
+    if upBrk or dnBrk
+        sweepDir := (upBrk and dnBrk) ? (close >= (asiaHi + asiaLo) / 2 ? -1 : 1) : upBrk ? 1 : -1
+        sweepBar := bar_index
+        evSweep := true
+if sweepDir != 0 and not reclaimed and not brokeOut
+    bool backInside = sweepDir == 1 ? close < asiaHi : close > asiaLo
+    if backInside
+        reclaimed := true
+        reclaimBar := bar_index
+        evReclaim := true
+    else if bar_index - sweepBar > reclaimBars
+        brokeOut := true
+bool bigDir = sweepDir == 1 ? (open - close >= dispMult * atr) : sweepDir == -1 ? (close - open >= dispMult * atr) : false
+if reclaimed and not dist and bar_index - reclaimBar <= dispWindow and bigDir
+    dist := true
+    distDir := -sweepDir
+    evDist := true
+
+if evSweep
+    label.new(bar_index, sweepDir == 1 ? high : low, "Asia " + (sweepDir == 1 ? "high" : "low") + " swept", style = sweepDir == 1 ? label.style_label_down : label.style_label_up, color = color.new(sweepDir == 1 ? colBear : colBull, 75), textcolor = sweepDir == 1 ? colBear : colBull, size = size.small)
+if evReclaim
+    label.new(bar_index, sweepDir == 1 ? high : low, "Reclaimed", style = sweepDir == 1 ? label.style_label_down : label.style_label_up, color = color.new(colLiq, 75), textcolor = colLiq, size = size.small)
+if evDist
+    label.new(bar_index, distDir == 1 ? low : high, "Distribution " + (distDir == 1 ? "up" : "down"), style = distDir == 1 ? label.style_label_up : label.style_label_down, color = color.new(distDir == 1 ? colBull : colBear, 60), textcolor = distDir == 1 ? colBull : colBear, size = size.normal)
+
+// Daily open (episode 10): a bullish day dips below the open early, then reclaims it (mirror for bearish).
+float dOpen = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_on)
+var bool lowBelowOpen = false
+var bool highAboveOpen = false
+if newDay
+    lowBelowOpen := false
+    highAboveOpen := false
+if low < dOpen
+    lowBelowOpen := true
+if high > dOpen
+    highAboveOpen := true
+
+// ───────────────────────────── Liquidity map and daily bias ─────────────────────────────
+[prevDH, prevDL, prevDC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+[prevWH, prevWL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+float adr = request.security(syminfo.tickerid, "D", ta.sma(high - low, 5)[1], lookahead = barmerge.lookahead_on)
+
+var float curDH = na
+var float curDL = na
+var float curWH = na
+var float curWL = na
+curDH := newDay ? high : math.max(nz(curDH, high), high)
+curDL := newDay ? low : math.min(nz(curDL, low), low)
+curWH := newWeek ? high : math.max(nz(curWH, high), high)
+curWL := newWeek ? low : math.min(nz(curWL, low), low)
+bool dHiSw = curDH > prevDH
+bool dLoSw = curDL < prevDL
+bool wHiSw = curWH > prevWH
+bool wLoSw = curWL < prevWL
+
+// The draw on liquidity: a swept high points down, a swept low points up, otherwise the nearer level.
+f_draw(bool hiSw, bool loSw, float hi, float lo) =>
+    int d = 0
+    if hiSw and not loSw
+        d := -1
+    else if loSw and not hiSw
+        d := 1
+    else if not hiSw and not loSw and not na(hi) and not na(lo)
+        d := (hi - close) < (close - lo) ? 1 : -1
+    d
+
+int wkDraw = f_draw(wHiSw, wLoSw, prevWH, prevWL)
+int drawDir = wkDraw != 0 ? wkDraw : f_draw(dHiSw, dLoSw, prevDH, prevDL)
+float rngD = prevDH - prevDL
+float closePos = rngD > 0 ? (prevDC - prevDL) / rngD : na
+bool noBiasDay = not na(closePos) and closePos > closeEdge and closePos < 1 - closeEdge
+float wkMid = (prevWH + prevWL) / 2
+bool wkDiscount = not na(wkMid) and close < wkMid
+bool wkPremium = not na(wkMid) and close > wkMid
+bool earlyDay = isIntra ? (time - time("D")) / 3600000 < earlyHours : true
+bool bullSweepOK = not dLoSw or earlyDay
+bool bearSweepOK = not dHiSw or earlyDay
+int bias = 0
+if not na(closePos) and not noBiasDay
+    if drawDir == 1 and closePos <= closeEdge and wkDiscount and bullSweepOK
+        bias := 1
+    if drawDir == -1 and closePos >= 1 - closeEdge and wkPremium and bearSweepOK
+        bias := -1
+
+plot(showLevels ? prevDH : na, "Previous day high", color = dHiSw ? color.new(colLiq, 85) : color.new(colBear, 30), style = plot.style_linebr)
+plot(showLevels ? prevDL : na, "Previous day low", color = dLoSw ? color.new(colLiq, 85) : color.new(colBull, 30), style = plot.style_linebr)
+plot(showLevels ? prevWH : na, "Previous week high", color = wHiSw ? color.new(colLiq, 80) : color.new(colBear, 10), linewidth = 2, style = plot.style_linebr)
+plot(showLevels ? prevWL : na, "Previous week low", color = wLoSw ? color.new(colLiq, 80) : color.new(colBull, 10), linewidth = 2, style = plot.style_linebr)
+plot(showLevels ? dOpen : na, "Daily open", color = color.new(colNY, 30), style = plot.style_linebr)
+
+// ───────────────────────────── Prop budget ─────────────────────────────
+// Assumes the daily loss limit is measured from the start-of-day balance. Check your firm's actual rule.
+float dailyBuf = dailyLossLimit > 0 ? dailyLossLimit + todayPnL : na
+float allowRisk = acct * riskPct / 100
+if not na(dailyBuf)
+    allowRisk := math.min(allowRisk, math.max(dailyBuf, 0) * bufferFrac)
+if ddRoom > 0
+    allowRisk := math.min(allowRisk, ddRoom * bufferFrac)
+
+f_contracts(float pts) =>
+    pointValue > 0 and pts > 0 ? math.min(math.floor(allowRisk / (pts * pointValue)), maxContracts) : na
+
+// ───────────────────────────── Link to the main indicator ─────────────────────────────
+var int lastDir = 0
+var float lastEn = na
+var float lastSl = na
+var float lastTg = na
+var int lastT = na
+var int dayStartT = na
+if newDay
+    dayStartT := time
+if useMain and (srcDir == 1 or srcDir == -1)
+    lastDir := srcDir == 1 ? 1 : -1
+    lastEn := srcEn
+    lastSl := srcSl
+    lastTg := srcTg
+    lastT := time
+
+// ───────────────────────────── Plan card ─────────────────────────────
+var table card = table.new(cardPos, 2, 12, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+
+f_hm(int m) => str.tostring(math.floor(m / 60)) + "h " + str.tostring(m % 60) + "m"
+
+if showCard and barstate.islast
+    string clockTxt = not isIntra ? "intraday charts only" : blackout ? "Flat period, trading resumes in " + f_hm(minsToOpen) : na(minsToFlat) ? "n/a" : "Flat in " + f_hm(minsToFlat) + (nearFlat ? " - no new entries" : "")
+    string winTxt = (inSB ? "Silver bullet / " : "") + (inLon ? "London kill zone" : inNY ? "New York kill zone" : inAsia ? "Asia (accumulation)" : "Outside the kill zones")
+
+    string biasTxt = noBiasDay ? "No-bias day (mid close)" : bias == 1 ? "Bullish" : bias == -1 ? "Bearish" : "Unclear"
+    string detTxt = "draw " + (drawDir == 1 ? "up" : drawDir == -1 ? "down" : "-") + " | close " + (na(closePos) ? "n/a" : str.tostring(closePos * 100, "#") + "%") + " | " + (wkDiscount ? "weekly discount" : wkPremium ? "weekly premium" : "-")
+
+    string amdTxt = ""
+    if inAsia
+        amdTxt := "Accumulation: Asia range forming (" + str.tostring(asiaHi - asiaLo, "#.#") + " pts)"
+    else if na(asiaHi)
+        amdTxt := "Waiting for the Asia session"
+    else if brokeOut
+        amdTxt := "Range break, not a sweep: expect continuation"
+    else if sweepDir == 0
+        amdTxt := "Range set, waiting for a sweep: " + str.tostring(asiaHi, format.mintick) + " / " + str.tostring(asiaLo, format.mintick)
+    else if not reclaimed
+        amdTxt := "Asia " + (sweepDir == 1 ? "high" : "low") + " swept, waiting for a reclaim"
+    else if not dist
+        amdTxt := bar_index - reclaimBar > dispWindow ? "Reclaimed, no displacement (weak)" : "Reclaimed, waiting for displacement " + (sweepDir == 1 ? "down" : "up")
+    else
+        amdTxt := "Distribution " + (distDir == 1 ? "UP" : "DOWN") + " under way" + (distDir == bias ? " (agrees with bias)" : "")
+
+    string openTxt = close >= dOpen ? (lowBelowOpen ? "Above open, dipped below earlier (bullish AMD)" : "Above the daily open") : (highAboveOpen ? "Below open, poked above earlier (bearish AMD)" : "Below the daily open")
+
+    array<string> nm = array.from("PDH", "PDL", "PWH", "PWL", "Asia H", "Asia L", "London H", "London L")
+    array<float> px = array.from(prevDH, prevDL, prevWH, prevWL, asiaHi, asiaLo, lonHi, lonLo)
+    array<bool> sw = array.from(dHiSw, dLoSw, wHiSw, wLoSw, asiaHiSw, asiaLoSw, lonHiSw, lonLoSw)
+    array<bool> rdy = array.from(true, true, true, true, not inAsia, not inAsia, not inLon, not inLon)
+    float bestUp = na
+    float bestDn = na
+    string upName = ""
+    string dnName = ""
+    for i = 0 to array.size(nm) - 1
+        float lv = array.get(px, i)
+        if not na(lv) and array.get(rdy, i) and not array.get(sw, i)
+            if lv > close and (na(bestUp) or lv < bestUp)
+                bestUp := lv
+                upName := array.get(nm, i)
+            if lv < close and (na(bestDn) or lv > bestDn)
+                bestDn := lv
+                dnName := array.get(nm, i)
+    string upTxt = na(bestUp) ? "none" : upName + " " + str.tostring(bestUp, format.mintick) + "  +" + str.tostring(bestUp - close, "#.#") + " pts" + (adr > 0 ? " (" + str.tostring((bestUp - close) / adr * 100, "#") + "% ADR)" : "")
+    string dnTxt = na(bestDn) ? "none" : dnName + " " + str.tostring(bestDn, format.mintick) + "  -" + str.tostring(close - bestDn, "#.#") + " pts" + (adr > 0 ? " (" + str.tostring((close - bestDn) / adr * 100, "#") + "% ADR)" : "")
+
+    string riskTxt = ""
+    if dailyLossLimit > 0 and dailyBuf <= 0
+        riskTxt := "DAILY LIMIT REACHED: stop trading"
+    else
+        riskTxt := (dailyLossLimit > 0 ? "daily room $" + str.tostring(math.max(dailyBuf, 0), "#") + " | " : "") + (ddRoom > 0 ? "drawdown room $" + str.tostring(ddRoom, "#") + " | " : "") + "risk this trade $" + str.tostring(allowRisk, "#")
+
+    string calcTxt = "off (set entry and stop in settings)"
+    if calcEntry > 0 and calcStop > 0
+        float cPts = math.abs(calcEntry - calcStop)
+        float cCon = f_contracts(cPts)
+        calcTxt := str.tostring(cPts, "#.##") + " pts stop: " + (na(cCon) ? "set a point value" : str.tostring(cCon, "#") + " contracts" + (cCon < 1 ? " (stop too wide for 1)" : " ($" + str.tostring(cCon * cPts * pointValue, "#") + " risk)"))
+
+    string mainTxt = "not linked"
+    if useMain
+        if lastDir != 0 and not na(lastT) and lastT >= nz(dayStartT, 0)
+            float mPts = math.abs(lastEn - lastSl)
+            float mCon = f_contracts(mPts)
+            mainTxt := (lastDir == 1 ? "LONG " : "SHORT ") + str.tostring(lastEn, format.mintick) + " stop " + str.tostring(lastSl, format.mintick) + " target " + str.tostring(lastTg, format.mintick) + " | " + (na(mCon) ? "n/a" : str.tostring(mCon, "#") + " contracts")
+        else
+            mainTxt := "no signal this trading day"
+
+    table.cell(card, 0, 0, "Mayne Day Planner  " + syminfo.ticker, text_color = color.white, text_size = cardTxt, bgcolor = color.new(colLiq, 60))
+    table.merge_cells(card, 0, 0, 1, 0)
+    table.cell(card, 0, 1, "Clock", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 1, clockTxt, text_color = nearFlat ? colBear : color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 2, "Window", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 2, winTxt, text_color = inLon or inNY or inSB ? colNY : colLiq, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 3, "Daily bias", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 3, biasTxt, text_color = bias == 1 ? colBull : bias == -1 ? colBear : colLiq, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 4, "Bias detail", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 4, detTxt, text_color = colLiq, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 5, "Daily AMD", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 5, amdTxt, text_color = dist ? (distDir == 1 ? colBull : colBear) : color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 6, "Daily open", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 6, openTxt, text_color = colLiq, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 7, "Liquidity above", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 7, upTxt, text_color = colBear, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 8, "Liquidity below", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 8, dnTxt, text_color = colBull, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 9, "Risk budget", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 9, riskTxt, text_color = dailyLossLimit > 0 and dailyBuf <= 0 ? colBear : color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 10, "Calculator", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 10, calcTxt, text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 0, 11, "Main signal", text_color = color.white, text_size = cardTxt, text_halign = text.align_left)
+    table.cell(card, 1, 11, mainTxt, text_color = lastDir == 1 ? colBull : lastDir == -1 ? colBear : colLiq, text_size = cardTxt, text_halign = text.align_left)
+
+// ───────────────────────────── Alerts ─────────────────────────────
+alertcondition(isIntra and not na(minsToFlat) and minsToFlat <= 15 and (na(minsToFlat[1]) or minsToFlat[1] > 15), "MDP 15 minutes to flat", "15 minutes until forced flat on {{ticker}}: manage or close open positions")
+alertcondition(inLon and not inLon[1], "MDP London kill zone starting", "London kill zone starting on {{ticker}}")
+alertcondition(inNY and not inNY[1], "MDP New York kill zone starting", "New York kill zone starting on {{ticker}}")
+alertcondition(inSB and not inSB[1], "MDP silver bullet starting", "Silver bullet window starting on {{ticker}}")
+alertcondition(evSweep, "MDP Asia range swept", "Asia range swept on {{ticker}}: watch for a reclaim")
+alertcondition(evReclaim, "MDP sweep reclaimed", "Asia sweep reclaimed on {{ticker}}: watch for displacement")
+alertcondition(evDist, "MDP distribution started", "Distribution started after the Asia sweep on {{ticker}}")

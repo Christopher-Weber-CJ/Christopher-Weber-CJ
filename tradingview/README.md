@@ -176,6 +176,22 @@ Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, 
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
+## Companion: Mayne Day Planner (`mayne-day-planner.pine`)
+
+A second, lighter indicator for the day-trading session. Add it to the same chart as the framework. It does not find entries itself. It answers "what is today's plan and how much can I risk?".
+
+- **Clock:** Mountain time by default, minutes to forced flat (14:45) and to the 16:00 reopen, with a blackout and near-flat warning.
+- **Sessions:** Asia and London range boxes with swept flags, London / New York kill zones and the three silver bullets.
+- **Daily AMD tracker:** Asia/London sweep, reclaim within a few bars, then displacement (distribution), labelled on the chart.
+- **Daily bias checklist:** yesterday's close position, weekly premium/discount, draw on liquidity, early/late sweep. It is simplified and has no weekly structure trend.
+- **Liquidity map:** PDH / PDL / PWH / PWL (dimmed when swept), daily open, distance in points and % of ADR.
+- **Prop budget:** enter daily loss limit, drawdown room and today's P&L (manual inputs). It limits risk to a fraction of what is left and converts it to MES contracts ($5/pt).
+- **Calculator:** enter a price entry and stop to get contracts and risk.
+- **Link to main:** turn on *Link to main indicator* and choose the four `Export:` plots of the framework (signal, entry, stop, target). The card then shows the last main signal.
+- **Alerts:** 15 minutes to flat, London / New York / silver bullet start, sweep, reclaim, distribution.
+
+Assumptions: the daily loss limit is measured from the start-of-day balance. It has not been compiled in TradingView, so expect a compile error or two.
+
 ## Known gaps and cautions
 
 - All 25 episodes of the playlist have been read (episodes 1-11 downloaded, 12-25 supplied as transcripts). The script has **not** been compiled or run in TradingView, so expect a compile error or two on first load, and check every signal against a chart before trusting it.

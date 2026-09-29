@@ -1336,6 +1336,12 @@ if longSig or shortSig
 plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, size = size.normal, text = "L")
 plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.normal, text = "S")
 
+// Hidden exports for the Mayne Day Planner companion (choose these in its "Link to main indicator" inputs)
+plot(longSig ? 1.0 : shortSig ? -1.0 : 0.0, "Export: signal (1 long, -1 short)", display = display.none)
+plot(longSig or shortSig ? sigEntry : na, "Export: entry", display = display.none)
+plot(longSig or shortSig ? sigStop : na, "Export: stop", display = display.none)
+plot(longSig or shortSig ? sigTarget : na, "Export: target", display = display.none)
+
 // ───────────────────────────── Dashboard ─────────────────────────────
 var table dash = table.new(dashPos, 2, 19, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
 
