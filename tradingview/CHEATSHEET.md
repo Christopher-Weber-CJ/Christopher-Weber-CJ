@@ -89,6 +89,16 @@ Example: `LONG REV SB A+ RR 2.4 ★5` with a size line under it.
 | `ER` | Efficiency ratio: net move divided by distance travelled. Low means ranging. |
 | `PDH` `PDL` `PWH` `PWL` | Previous day / week high / low. |
 
+## Signal log
+
+| Column / part | Meaning |
+|---|---|
+| Header `W x / L y net zR` | Wins, losses and net R of this indicator's own logged signals. |
+| `When` | Bar time of the signal, in your session timezone setting. |
+| `Setup` | Direction plus `CONT` / `REV`, silver bullet tag and grade, e.g. `LONG REV SB A+`. |
+| `Entry` / `Stop` / `Target` | The plan at the time of the signal. `Target` is the external liquidity target. |
+| `Result` | `+2.0R` win (at 2R, or the full target if that setting is chosen), `-1R` loss, `open` if neither has been reached. Stop is assumed first if both are hit in one bar. |
+
 ## Alerts
 
 Long setup, short setup, bullish / bearish MSS, sell-side / buy-side sweep, news window starting, London / New York kill zone starting, bullish / bearish SMT, range AMD, Judas swing.

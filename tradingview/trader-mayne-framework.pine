@@ -21,6 +21,7 @@ indicator("Trader Mayne Framework", shorttitle = "TM Frame", overlay = true,
 G_VIEW = "Display"
 viewMode = input.string("Signals", "Chart view", options = ["Signals", "Clean", "Full"], tooltip = "Signals: trade plans (entry, stop, target, size), signal markers, context POI, dealing range and dashboard only. Clean: adds model zones, equal-high/low liquidity, meaningful sweeps / structure shifts and previous day / week levels. Full: everything.", group = G_VIEW)
 cleanMinScore = input.int(5, "Clean view: also show order blocks / breakers scoring at least", minval = 0, maxval = 7, group = G_VIEW)
+labelSize = input.string("normal", "Label size", options = ["small", "normal", "large"], group = G_VIEW)
 
 G_STR = "Market structure"
 swingN     = input.int(1, "Swing candles each side (1 = three-candle swing)", minval = 1, maxval = 5, group = G_STR)
@@ -160,6 +161,9 @@ maxDaily  = input.int(0, "Overtrading guard: maximum signals per day (0 = off)",
 G_DSH = "Dashboard"
 showDash = input.bool(true, "Show checklist dashboard", group = G_DSH)
 dashSize = input.string("small", "Text size", options = ["tiny", "small", "normal", "large"], group = G_DSH)
+showLog  = input.bool(true, "Show the signal log table", group = G_DSH)
+logRows  = input.int(5, "Signal log: number of rows", minval = 1, maxval = 8, group = G_DSH)
+logPos   = input.string(position.bottom_left, "Signal log: position", options = [position.top_right, position.middle_right, position.bottom_right, position.top_left, position.middle_left, position.bottom_left], group = G_DSH)
 dashPos  = input.string(position.top_right, "Position", options = [position.top_right, position.middle_right, position.bottom_right, position.top_left, position.middle_left, position.bottom_left], group = G_DSH)
 
 G_COL = "Colors"
@@ -179,6 +183,8 @@ bool sigView = viewMode == "Signals"
 bool useAsiaBox = showAsia and not cleanView
 bool showRanges = showHTFRange and not cleanView
 dashTxt = dashSize == "tiny" ? size.tiny : dashSize == "normal" ? size.normal : dashSize == "large" ? size.large : size.small
+lblTiny = labelSize == "large" ? size.normal : labelSize == "normal" ? size.small : size.tiny
+lblMain = labelSize == "large" ? size.large : labelSize == "normal" ? size.normal : size.small
 
 // ───────────────────── Higher-timeframe structure ─────────────────────
 // Runs inside request.security on series shifted by one bar, so the HTF values never use the
@@ -314,7 +320,7 @@ if not shDone and close > shLvl
         color mc = bullMSS ? colMSS : colBull
         line.new(shBar, shLvl, bar_index, shLvl, color = mc, style = line.style_dashed)
         label.new(math.round(math.avg(shBar, bar_index)), shLvl, (bullMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
-             style = label.style_label_down, color = color.new(mc, 85), textcolor = mc, size = size.tiny)
+             style = label.style_label_down, color = color.new(mc, 85), textcolor = mc, size = lblTiny)
     trend := 1
 
 if not slDone and close < slLvl
@@ -326,7 +332,7 @@ if not slDone and close < slLvl
         color mc = bearMSS ? colMSS : colBear
         line.new(slBar, slLvl, bar_index, slLvl, color = mc, style = line.style_dashed)
         label.new(math.round(math.avg(slBar, bar_index)), slLvl, (bearMSS ? "MSS" : "MSB") + (bodyBig ? " +D" : ""),
-             style = label.style_label_up, color = color.new(mc, 85), textcolor = mc, size = size.tiny)
+             style = label.style_label_up, color = color.new(mc, 85), textcolor = mc, size = lblTiny)
     trend := -1
 
 // ───────────────────────────── Dealing range ─────────────────────────────
@@ -349,7 +355,7 @@ if not na(mph)
             expUp := false
             if showOldRange and not cleanView
                 line.new(rHiBar, oldHi, bar_index, oldHi, extend = extend.right, color = color.new(colLiq, 40), style = line.style_dotted)
-                label.new(bar_index, oldHi, "old range high", style = label.style_label_down, color = color.new(colLiq, 85), textcolor = colLiq, size = size.tiny)
+                label.new(bar_index, oldHi, "old range high", style = label.style_label_down, color = color.new(colLiq, 85), textcolor = colLiq, size = lblTiny)
         rHi := mph
         rHiBar := bar_index - majorN
         rangeChanged := true
@@ -360,7 +366,7 @@ if not na(mpl)
             expDn := false
             if showOldRange and not cleanView
                 line.new(rLoBar, oldLo, bar_index, oldLo, extend = extend.right, color = color.new(colLiq, 40), style = line.style_dotted)
-                label.new(bar_index, oldLo, "old range low", style = label.style_label_up, color = color.new(colLiq, 85), textcolor = colLiq, size = size.tiny)
+                label.new(bar_index, oldLo, "old range low", style = label.style_label_up, color = color.new(colLiq, 85), textcolor = colLiq, size = lblTiny)
         rLo := mpl
         rLoBar := bar_index - majorN
         rangeChanged := true
@@ -415,7 +421,7 @@ if showRange and drChanged and drValid
         float o1 = bullLeg ? drHi - rg * oteLo : drLo + rg * oteLo
         float o2 = bullLeg ? drHi - rg * oteHi : drLo + rg * oteHi
         float sp = bullLeg ? drHi - rg * sweetSpot : drLo + rg * sweetSpot
-        bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE " + srcTag, text_size = size.tiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
+        bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE " + srcTag, text_size = lblTiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
         rngSweet := line.new(x0, sp, bar_index, sp, extend = extend.right, color = color.new(colMSS, 40), style = line.style_dotted)
 
 plot(showRanges and syncRangeOK ? syncHi : na, "Sync TF range high", color = color.new(colBear, 50), style = plot.style_linebr)
@@ -454,7 +460,7 @@ if newAsia
     asiaHi := high
     asiaLo := low
     if useAsiaBox
-        asiaBx := box.new(bar_index, high, bar_index, low, border_color = color.new(colAsia, 40), bgcolor = color.new(colAsia, 90), text = "Asia", text_size = size.tiny, text_color = color.new(colAsia, 20), text_halign = text.align_left)
+        asiaBx := box.new(bar_index, high, bar_index, low, border_color = color.new(colAsia, 40), bgcolor = color.new(colAsia, 90), text = "Asia", text_size = lblTiny, text_color = color.new(colAsia, 20), text_halign = text.align_left)
 else if inAsia
     asiaHi := math.max(asiaHi, high)
     asiaLo := math.min(asiaLo, low)
@@ -474,11 +480,11 @@ if showJudas and isIntra and not inAsia and inKZ and not na(asiaLo)
     if not judasBullDone and low < asiaLo and close > asiaLo
         judasBull := true
         judasBullDone := true
-        label.new(bar_index, low, "Judas ↓ " + (inLon ? "(London)" : "(NY)"), style = label.style_label_up, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny)
+        label.new(bar_index, low, "Judas ↓ " + (inLon ? "(London)" : "(NY)"), style = label.style_label_up, color = color.new(colBull, 80), textcolor = colBull, size = lblTiny)
     if not judasBearDone and high > asiaHi and close < asiaHi
         judasBear := true
         judasBearDone := true
-        label.new(bar_index, high, "Judas ↑ " + (inLon ? "(London)" : "(NY)"), style = label.style_label_down, color = color.new(colBear, 80), textcolor = colBear, size = size.tiny)
+        label.new(bar_index, high, "Judas ↑ " + (inLon ? "(London)" : "(NY)"), style = label.style_label_down, color = color.new(colBear, 80), textcolor = colBear, size = lblTiny)
 
 float dOpen = request.security(syminfo.tickerid, "D", open, lookahead = barmerge.lookahead_on)
 float wOpen = request.security(syminfo.tickerid, "W", open, lookahead = barmerge.lookahead_on)
@@ -610,7 +616,7 @@ f_showZone(Zone z, bool star) =>
     string nm = (z.dir == 1 ? "Bull " : "Bear ") + (z.kind == 0 ? "OB" : z.kind == 1 ? "BRK" : "FVG") + " " + str.tostring(z.score) + (star ? "★" : "")
     float mid = (z.top + z.bot) / 2
     z.bx := box.new(z.t0, z.top, bar_index + 1, z.bot, border_color = color.new(base, 30), border_style = z.kind == 2 ? line.style_dotted : line.style_solid,
-         bgcolor = color.new(base, z.kind == 2 ? 92 : 84), extend = extend.right, text = nm, text_size = size.tiny, text_color = color.new(base, 10), text_halign = text.align_right)
+         bgcolor = color.new(base, z.kind == 2 ? 92 : 84), extend = extend.right, text = nm, text_size = lblTiny, text_color = color.new(base, 10), text_halign = text.align_right)
     z.mid := line.new(z.t0, mid, bar_index + 1, mid, extend = extend.right, color = color.new(base, 40), style = line.style_dotted)
     true
 
@@ -752,15 +758,15 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string t
         sizeTxt := "scale in zone " + str.tostring(s1, "#.####") + " / " + str.tostring(s2, "#.####") + " / " + str.tostring(s3, "#.####") + "\nrisk if all fill " + str.tostring(riskAmt, "#") + ", RR at avg " + str.tostring(math.abs(tp - avgE) / math.abs(avgE - sl), "#.0")
         array.push(tLines, line.new(bar_index, eMid, r, eMid, color = colLiq, style = line.style_dotted))
         array.push(tLines, line.new(bar_index, eBot, r, eBot, color = colLiq, style = line.style_dotted))
-        array.push(tLabels, label.new(r, eMid, "E2", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny))
-        array.push(tLabels, label.new(r, eBot, "E3", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny))
+        array.push(tLabels, label.new(r, eMid, "E2", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = lblTiny))
+        array.push(tLabels, label.new(r, eBot, "E3", style = label.style_label_left, color = color.new(colLiq, 80), textcolor = colLiq, size = lblTiny))
     else
         float u0 = na(u0in) ? riskAmt / risk : u0in
         sizeTxt := "size " + str.tostring(u0 * frac, "#.####") + (frac < 1 ? " (" + str.tostring(frac * 100, "#") + "% of full)" : " (risk " + str.tostring(riskAmt, "#") + ")")
     array.push(tBoxes, box.new(bar_index, math.max(en, sl), r, math.min(en, sl), border_color = na, bgcolor = color.new(colBear, 82)))
     array.push(tBoxes, box.new(bar_index, math.max(en, tp), r, math.min(en, tp), border_color = na, bgcolor = color.new(colBull, 82)))
     array.push(tLines, line.new(bar_index, t1, r, t1, color = colBull, style = line.style_dashed))
-    array.push(tLabels, label.new(r, t1, str.tostring(minRR, "#.#") + "R", style = label.style_label_left, color = color.new(colBull, 80), textcolor = colBull, size = size.tiny))
+    array.push(tLabels, label.new(r, t1, str.tostring(minRR, "#.#") + "R", style = label.style_label_left, color = color.new(colBull, 80), textcolor = colBull, size = lblTiny))
     if showPart and array.size(liqs) > 0
         float partLvl = na
         for k = 0 to array.size(liqs) - 1
@@ -770,9 +776,9 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string t
                     partLvl := q.px
         if not na(partLvl)
             array.push(tLines, line.new(bar_index, partLvl, r, partLvl, color = colMSS, style = line.style_dotted))
-            array.push(tLabels, label.new(r, partLvl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = size.tiny))
+            array.push(tLabels, label.new(r, partLvl, "partial " + str.tostring(partPct, "#") + "%", style = label.style_label_left, color = color.new(colMSS, 80), textcolor = colMSS, size = lblTiny))
     array.push(tLabels, label.new(bar_index, en, (dir == 1 ? "LONG " : "SHORT ") + tag + " RR " + str.tostring(rr, "#.0") + "  ★" + str.tostring(score) + "\n" + sizeTxt,
-         style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = size.small))
+         style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? colBull : colBear, textcolor = color.white, size = lblMain))
     while array.size(tBoxes) > (sigView ? 6 : 12)
         box.delete(array.shift(tBoxes))
     while array.size(tLines) > (sigView ? 8 : 20)
@@ -805,7 +811,7 @@ if not na(ph) or not na(pl)
             if showLiq and not sigView and (not cleanView or isEq)
                 ln := line.new(bar_index - swingN, px, bar_index, px, extend = extend.right, color = color.new(colLiq, isEq ? 20 : 55), width = isEq ? 2 : 1, style = line.style_dotted)
             if isEq and showLiq and not sigView
-                label.new(bar_index - swingN, px, side == 1 ? "EQH" : "EQL", style = side == 1 ? label.style_label_down : label.style_label_up, color = color.new(colLiq, 80), textcolor = colLiq, size = size.tiny)
+                label.new(bar_index - swingN, px, side == 1 ? "EQH" : "EQL", style = side == 1 ? label.style_label_down : label.style_label_up, color = color.new(colLiq, 80), textcolor = colLiq, size = lblTiny)
             array.push(liqs, Liq.new(px = px, side = side, bar = bar_index - swingN, ln = ln, eq = isEq, brk = na))
     while array.size(liqs) > maxLiq
         Liq oldest = array.shift(liqs)
@@ -856,7 +862,7 @@ if nLiq > 0
             if showSweeps and not sigView and (not cleanView or l.eq or inNews)
                 label.new(bar_index, l.side == 1 ? high : low, (inNews ? "NEWS " : "") + (l.eq ? "EQ " : "") + how + (l.side == 1 ? " ↓" : " ↑"),
                      style = l.side == 1 ? label.style_label_down : label.style_label_up,
-                     color = color.new(l.side == 1 ? colBear : colBull, 75), textcolor = l.side == 1 ? colBear : colBull, size = size.tiny)
+                     color = color.new(l.side == 1 ? colBear : colBull, 75), textcolor = l.side == 1 ? colBear : colBull, size = lblTiny)
         if done
             if not na(l.ln)
                 line.set_extend(l.ln, extend.none)
@@ -885,10 +891,10 @@ bool smtBull = useSMT and keyBull and ((newLowA and not newLowB and cLow > cLowN
 bool smtBear = useSMT and keyBear and ((newHighA and not newHighB and cHigh < cHighN * (1 - smtGap / 100)) or (newHighB and not newHighA and high < highN * (1 - smtGap / 100)))
 if smtBull
     lastSmtBull := bar_index
-    label.new(bar_index, low, "SMT ↑", style = label.style_label_up, color = color.new(colBull, 75), textcolor = colBull, size = size.tiny)
+    label.new(bar_index, low, "SMT ↑", style = label.style_label_up, color = color.new(colBull, 75), textcolor = colBull, size = lblTiny)
 if smtBear
     lastSmtBear := bar_index
-    label.new(bar_index, high, "SMT ↓", style = label.style_label_down, color = color.new(colBear, 75), textcolor = colBear, size = size.tiny)
+    label.new(bar_index, high, "SMT ↓", style = label.style_label_down, color = color.new(colBear, 75), textcolor = colBear, size = lblTiny)
 
 // ───────────── Episode 22: liquidity map and daily bias checklist ─────────────
 [prevDH, prevDL, prevDC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
@@ -973,11 +979,11 @@ bool amdBear = false
 if showAMD and bullBrk and not na(springBar) and bar_index - springBar <= amdWindow
     amdBull := true
     springBar := na
-    label.new(bar_index, low, "AMD ↑ spring", style = label.style_label_up, color = color.new(colBull, 75), textcolor = colBull, size = size.tiny)
+    label.new(bar_index, low, "AMD ↑ spring", style = label.style_label_up, color = color.new(colBull, 75), textcolor = colBull, size = lblTiny)
 if showAMD and bearBrk and not na(utadBar) and bar_index - utadBar <= amdWindow
     amdBear := true
     utadBar := na
-    label.new(bar_index, high, "AMD ↓ UTAD", style = label.style_label_down, color = color.new(colBear, 75), textcolor = colBear, size = size.tiny)
+    label.new(bar_index, high, "AMD ↓ UTAD", style = label.style_label_down, color = color.new(colBear, 75), textcolor = colBear, size = lblTiny)
 
 // Step 1 of the 5-minute model: price must trade INTO the context-timeframe POI, not just near it.
 var int lastTagL = na
@@ -1057,7 +1063,16 @@ if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook 
 var array<int>   trDir = array.new<int>()
 var array<float> trSl   = array.new<float>()
 var array<float> trTp   = array.new<float>()
+var array<int>    lgT   = array.new<int>()
+var array<int>    lgDir = array.new<int>()
+var array<float>  lgEn  = array.new<float>()
+var array<float>  lgSl  = array.new<float>()
+var array<float>  lgTp  = array.new<float>()
+var array<float>  lgTgt = array.new<float>()
+var array<float>  lgRes = array.new<float>()
+var array<string> lgTag = array.new<string>()
 var int wins = 0
+var float netR = 0.0
 var int losses = 0
 var int consecLoss = 0
 var int lastLossBar = na
@@ -1159,6 +1174,7 @@ float sigEntry = na
 float sigStop = na
 float sigTarget = na
 float sigRR = na
+string sigTag = ""
 if not na(bestL)
     [en, sl, tp, rr] = f_plan(bestL)
     bool isAdd = scaleMode == "Add on confirmation" and campDir == 1 and campN >= 1 and campN <= maxAdds
@@ -1188,6 +1204,7 @@ if not na(bestL)
         sigStop := slUse
         sigTarget := tp
         sigRR := rrUse
+        sigTag := tg
         f_drawTrade(1, en, slUse, tp, rrUse, bestL.score, tg, bestL.top, bestL.bot, fr, u0)
 if not na(bestS) and not longSig
     [en, sl, tp, rr] = f_plan(bestS)
@@ -1218,38 +1235,55 @@ if not na(bestS) and not longSig
         sigStop := slUse
         sigTarget := tp
         sigRR := rrUse
+        sigTag := tg
         f_drawTrade(-1, en, slUse, tp, rrUse, bestS.score, tg, bestS.top, bestS.bot, fr, u0)
 
 if longSig or shortSig
     sigToday += 1
 
-int nTr = array.size(trDir)
-if nTr > 0
-    for k = 1 to nTr
-        int i = nTr - k
-        int d = array.get(trDir, i)
-        float slv = array.get(trSl, i)
-        float tpv = array.get(trTp, i)
-        bool hitSl = d == 1 ? low <= slv : high >= slv
-        bool hitTp = d == 1 ? high >= tpv : low <= tpv
-        if hitSl or hitTp
-            if hitSl
-                losses += 1
-                consecLoss += 1
-                lastLossBar := bar_index
-            else
-                wins += 1
-                consecLoss := 0
-            array.remove(trDir, i)
-            array.remove(trSl, i)
-            array.remove(trTp, i)
+// Signal log: every signal is stored, then resolved on later bars (stop hit first if both are hit in one bar).
+int nLg = array.size(lgDir)
+if nLg > 0
+    for i = 0 to nLg - 1
+        if na(array.get(lgRes, i))
+            int d = array.get(lgDir, i)
+            float slv = array.get(lgSl, i)
+            float tpv = array.get(lgTp, i)
+            float en0 = array.get(lgEn, i)
+            bool hitSl = d == 1 ? low <= slv : high >= slv
+            bool hitTp = d == 1 ? high >= tpv : low <= tpv
+            if hitSl or hitTp
+                float rMult = hitSl ? -1.0 : math.abs(tpv - en0) / math.abs(en0 - slv)
+                array.set(lgRes, i, rMult)
+                netR += rMult
+                if hitSl
+                    losses += 1
+                    consecLoss += 1
+                    lastLossBar := bar_index
+                else
+                    wins += 1
+                    consecLoss := 0
 if longSig or shortSig
-    array.push(trDir, longSig ? 1 : -1)
-    array.push(trSl, sigStop)
-    array.push(trTp, winAt == "2R" ? sigEntry + (longSig ? 1 : -1) * minRR * math.abs(sigEntry - sigStop) : sigTarget)
+    array.push(lgT, time)
+    array.push(lgDir, longSig ? 1 : -1)
+    array.push(lgEn, sigEntry)
+    array.push(lgSl, sigStop)
+    array.push(lgTp, winAt == "2R" ? sigEntry + (longSig ? 1 : -1) * minRR * math.abs(sigEntry - sigStop) : sigTarget)
+    array.push(lgTgt, sigTarget)
+    array.push(lgRes, na)
+    array.push(lgTag, (longSig ? "LONG " : "SHORT ") + sigTag)
+    while array.size(lgDir) > 30
+        array.shift(lgT)
+        array.shift(lgDir)
+        array.shift(lgEn)
+        array.shift(lgSl)
+        array.shift(lgTp)
+        array.shift(lgTgt)
+        array.shift(lgRes)
+        array.shift(lgTag)
 
-plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, size = size.small, text = "L")
-plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.small, text = "S")
+plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, size = size.normal, text = "L")
+plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.normal, text = "S")
 
 // ───────────────────────────── Dashboard ─────────────────────────────
 var table dash = table.new(dashPos, 2, 17, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
@@ -1324,6 +1358,29 @@ if showDash and barstate.islast
     table.cell(dash, 1, 15, biasTxt + " | draw " + (drawDir == 1 ? "up" : drawDir == -1 ? "down" : "-") + ", close " + (na(closePos) ? "n/a" : str.tostring(closePos * 100, "#") + "%"), text_color = dailyBias == 1 ? colBull : dailyBias == -1 ? colBear : colLiq, text_size = dashTxt)
     table.cell(dash, 0, 16, "Take the trade?", text_color = color.white, text_size = dashTxt, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
     table.cell(dash, 1, 16, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = dashTxt, bgcolor = color.new(allOK ? colBull : colBear, 70))
+
+// ───────────────────────────── Signal log table ─────────────────────────────
+var table logTbl = table.new(logPos, 6, 10, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+if showLog and barstate.islast
+    table.cell(logTbl, 0, 0, "Signal log   W " + str.tostring(wins) + " / L " + str.tostring(losses) + "   net " + str.tostring(netR, "#.0") + "R", text_color = color.white, text_size = dashTxt, bgcolor = color.new(colLiq, 60))
+    table.merge_cells(logTbl, 0, 0, 5, 0)
+    array<string> hdr = array.from("When", "Setup", "Entry", "Stop", "Target", "Result")
+    for c = 0 to 5
+        table.cell(logTbl, c, 1, array.get(hdr, c), text_color = color.white, text_size = dashTxt, bgcolor = color.new(colLiq, 80))
+    int nShow = math.min(logRows, array.size(lgDir))
+    if nShow > 0
+        for k = 0 to nShow - 1
+            int ix = array.size(lgDir) - 1 - k
+            float res = array.get(lgRes, ix)
+            color rc = na(res) ? colLiq : res > 0 ? colBull : colBear
+            string rt = na(res) ? "open" : (res > 0 ? "+" : "") + str.tostring(res, "#.0") + "R"
+            int r = 2 + k
+            table.cell(logTbl, 0, r, str.format_time(array.get(lgT, ix), "MM-dd HH:mm", tz), text_color = color.white, text_size = dashTxt)
+            table.cell(logTbl, 1, r, array.get(lgTag, ix), text_color = array.get(lgDir, ix) == 1 ? colBull : colBear, text_size = dashTxt)
+            table.cell(logTbl, 2, r, str.tostring(array.get(lgEn, ix), format.mintick), text_color = color.white, text_size = dashTxt)
+            table.cell(logTbl, 3, r, str.tostring(array.get(lgSl, ix), format.mintick), text_color = color.white, text_size = dashTxt)
+            table.cell(logTbl, 4, r, str.tostring(array.get(lgTgt, ix), format.mintick), text_color = color.white, text_size = dashTxt)
+            table.cell(logTbl, 5, r, rt, text_color = rc, text_size = dashTxt)
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")
