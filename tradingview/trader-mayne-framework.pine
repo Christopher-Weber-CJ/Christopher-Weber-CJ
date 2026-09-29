@@ -385,7 +385,14 @@ var line rngSweet = na
 var box  bxPrem = na
 var box  bxDisc = na
 var box  bxOte = na
-if showRange and rangeChanged and chartRangeOK
+// The drawn range and OTE follow the "Premium / discount source" so the picture matches the checklist
+// (by default the daily range). "Chart range" uses the chart's own major swings instead.
+bool useHtfPD = (pdSource == "Sync TF range" and syncRangeOK) or (pdSource == "Direction TF range" and dirRangeOK)
+float drHi = useHtfPD ? pdHi : rHi
+float drLo = useHtfPD ? pdLo : rLo
+bool drValid = useHtfPD or chartRangeOK
+bool drChanged = useHtfPD ? (not na(pdHi) and (na(pdHi[1]) or pdHi != pdHi[1] or pdLo != pdLo[1])) : rangeChanged
+if showRange and drChanged and drValid
     line.delete(rngHi)
     line.delete(rngLo)
     line.delete(rngEq)
@@ -393,21 +400,22 @@ if showRange and rangeChanged and chartRangeOK
     box.delete(bxPrem)
     box.delete(bxDisc)
     box.delete(bxOte)
-    int x0 = math.min(rHiBar, rLoBar)
-    float eq = (rHi + rLo) / 2
-    float rg = rHi - rLo
-    bool bullLeg = rLoBar < rHiBar
-    rngHi := line.new(x0, rHi, bar_index, rHi, extend = extend.right, color = color.new(colBear, 30), width = 1)
-    rngLo := line.new(x0, rLo, bar_index, rLo, extend = extend.right, color = color.new(colBull, 30), width = 1)
+    int x0 = useHtfPD ? bar_index : math.min(rHiBar, rLoBar)
+    float eq = (drHi + drLo) / 2
+    float rg = drHi - drLo
+    bool bullLeg = useHtfPD ? ((pdSource == "Sync TF range" ? syncTrend : dirTrend) == 1) : rLoBar < rHiBar
+    string srcTag = useHtfPD ? (pdSource == "Sync TF range" ? syncTF : dirTF) : "chart"
+    rngHi := line.new(x0, drHi, bar_index, drHi, extend = extend.right, color = color.new(colBear, 30), width = 1)
+    rngLo := line.new(x0, drLo, bar_index, drLo, extend = extend.right, color = color.new(colBull, 30), width = 1)
     rngEq := line.new(x0, eq, bar_index, eq, extend = extend.right, color = color.new(colLiq, 20), style = line.style_dashed)
     if showPD and not cleanView
-        bxPrem := box.new(x0, rHi, bar_index, eq, border_color = na, bgcolor = color.new(colBear, 93), extend = extend.right)
-        bxDisc := box.new(x0, eq, bar_index, rLo, border_color = na, bgcolor = color.new(colBull, 93), extend = extend.right)
+        bxPrem := box.new(x0, drHi, bar_index, eq, border_color = na, bgcolor = color.new(colBear, 93), extend = extend.right)
+        bxDisc := box.new(x0, eq, bar_index, drLo, border_color = na, bgcolor = color.new(colBull, 93), extend = extend.right)
     if showOTE
-        float o1 = bullLeg ? rHi - rg * oteLo : rLo + rg * oteLo
-        float o2 = bullLeg ? rHi - rg * oteHi : rLo + rg * oteHi
-        float sp = bullLeg ? rHi - rg * sweetSpot : rLo + rg * sweetSpot
-        bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE", text_size = size.tiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
+        float o1 = bullLeg ? drHi - rg * oteLo : drLo + rg * oteLo
+        float o2 = bullLeg ? drHi - rg * oteHi : drLo + rg * oteHi
+        float sp = bullLeg ? drHi - rg * sweetSpot : drLo + rg * sweetSpot
+        bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE " + srcTag, text_size = size.tiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
         rngSweet := line.new(x0, sp, bar_index, sp, extend = extend.right, color = color.new(colMSS, 40), style = line.style_dotted)
 
 plot(showRanges and syncRangeOK ? syncHi : na, "Sync TF range high", color = color.new(colBear, 50), style = plot.style_linebr)
