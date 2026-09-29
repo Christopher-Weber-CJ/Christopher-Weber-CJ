@@ -1,6 +1,6 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-20: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-25: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
@@ -9,7 +9,10 @@
 // 2R exits with partials at internal liquidity, break-even win-rate math), and scaling in
 // (split the same risk across a zone, or add only on new confirmed models), news as a liquidity
 // driver, nested dealing ranges (range stacking, displacement-only range resets), and time as a
-// filter and grade (kill zones, silver bullet windows, crypto trading day).
+// filter and grade (kill zones, silver bullet windows, crypto trading day), SMT divergence against a
+// correlated symbol (optional grade upgrade / filter at key levels), and the daily-bias checklist with
+// previous day / week / month liquidity, chart patterns read as liquidity plus structure (range AMD),
+// and behavioural guard-rails (oversizing warning, daily signal cap, tilt guard, signal stats).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -108,7 +111,7 @@ winAt    = input.string("2R", "Count a signal as a win at", options = ["2R", "Fu
 useGrades  = input.bool(false, "Grade setups by range stack and risk more on A+ (episode 19)", group = G_RSK)
 riskAPlus  = input.float(2.0, "Risk % for an A+ (fully stacked) setup", minval = 0.05, maxval = 10, step = 0.05, group = G_RSK)
 showPart = input.bool(true, "Show a partial-profit level at internal liquidity", group = G_RSK)
-partPct  = input.float(25, "Partial size (%) - he uses 25% or 33%", minval = 5, maxval = 50, group = G_RSK)
+partPct  = input.float(25, "Partial size (%) - he uses 25%, 33% or up to two-thirds at the first target", minval = 5, maxval = 80, group = G_RSK)
 scaleMode  = input.string("Single entry", "Entry scaling (episode 17)", options = ["Single entry", "Scale in zone", "Add on confirmation"], tooltip = "Scaling splits the SAME risk into pieces, it never adds risk. Single entry = one order (his advice until you are comfortable). Scale in zone = top / middle / bottom of the zone. Add on confirmation = smaller first entry, then adds only when a new, separate model forms.", group = G_RSK)
 wTop       = input.float(30, "Scale in zone: top weight %", minval = 1, group = G_RSK)
 wMid       = input.float(30, "Scale in zone: middle weight %", minval = 1, group = G_RSK)
@@ -116,6 +119,27 @@ wBot       = input.float(40, "Scale in zone: bottom weight %", minval = 1, group
 firstPct   = input.float(50, "Add on confirmation: first entry as % of full size", minval = 10, maxval = 100, group = G_RSK)
 maxAdds    = input.int(2, "Add on confirmation: number of adds", minval = 1, maxval = 4, group = G_RSK)
 trailStops = input.bool(true, "Add on confirmation: move the stop up to each new model's swing low", group = G_RSK)
+
+G_AMD = "Range AMD / Wyckoff (episode 23)"
+showAMD   = input.bool(true, "Mark a range sweep + reclaim followed by a structure break (spring / UTAD)", group = G_AMD)
+amdN      = input.int(40, "Range length (bars)", minval = 10, maxval = 300, group = G_AMD)
+amdMult   = input.float(6.0, "Range counts as compressed if its height is at most this many ATR", minval = 1.0, step = 0.5, group = G_AMD)
+amdWindow = input.int(10, "Structure break must follow the sweep within (bars)", minval = 2, maxval = 100, group = G_AMD)
+
+G_SMT = "SMT divergence (episode 21)"
+useSMT   = input.bool(false, "Check SMT divergence against a correlated symbol", group = G_SMT)
+smtSym   = input.symbol("BINANCE:ETHUSDT", "Comparison symbol (BTC vs ETH, NQ vs ES, EURUSD vs GBPUSD...)", group = G_SMT)
+smtLen   = input.int(20, "Swing window (bars) on the chart timeframe", minval = 5, maxval = 200, group = G_SMT)
+smtGap   = input.float(0.1, "Non-confirming asset must hold at least this % beyond its prior extreme (clear and obvious)", minval = 0.0, step = 0.05, group = G_SMT)
+smtLook  = input.int(20, "An SMT counts for this many bars", minval = 3, maxval = 200, group = G_SMT)
+reqSMT   = input.bool(false, "Require a recent SMT divergence to signal", tooltip = "Off by default: he treats SMT as a nice-to-have that upgrades conviction, not a requirement.", group = G_SMT)
+
+G_BIAS = "Daily bias and liquidity map (episode 22)"
+showMap    = input.bool(true, "Plot previous day / week / month highs and lows (dimmed once swept)", group = G_BIAS)
+closeEdge  = input.float(0.10, "Yesterday's close counts as 'at the extreme' inside this fraction of its range", minval = 0.02, maxval = 0.4, step = 0.01, group = G_BIAS)
+earlyHours = input.float(8, "A sweep is 'early' in the day if it happens within this many hours of the daily open", minval = 1, maxval = 23, group = G_BIAS)
+reqBias    = input.bool(false, "Require the full daily bias to agree with the trade", tooltip = "Very selective. Off by default; the bias is still shown on the dashboard.", group = G_BIAS)
+skipNoBias = input.bool(false, "Skip no-bias days (yesterday closed mid-range)", group = G_BIAS)
 
 G_DQ = "No-trade filters (episode 15)"
 minER     = input.float(0.10, "1. Bias clarity: minimum efficiency ratio on the direction timeframe (below = ranging, no trade)", minval = 0.0, maxval = 1.0, step = 0.01, tooltip = "Net move over 20 bars divided by total distance travelled. Near 0 = choppy / ranging. Set to 0 to disable.", group = G_DQ)
@@ -127,6 +151,7 @@ newsPre   = input.int(60, "6. Stay out this many minutes before news", minval = 
 newsPost  = input.int(120, "6. Stay out this many minutes after news", minval = 0, group = G_DQ)
 tiltN     = input.int(0, "7. Tilt guard: pause after this many consecutive stopped-out signals (0 = off)", minval = 0, group = G_DQ)
 tiltCool  = input.int(50, "7. Tilt guard: pause length (bars)", minval = 1, group = G_DQ)
+maxDaily  = input.int(0, "Overtrading guard: maximum signals per day (0 = off)", minval = 0, maxval = 20, group = G_DQ)
 
 G_DSH = "Dashboard"
 showDash = input.bool(true, "Show checklist dashboard", group = G_DSH)
@@ -466,7 +491,7 @@ type Zone
     int   t0       // left-most bar of the zone
     int   cb       // bar the zone was created on
     float ext      // sweep / leg extreme behind the zone (stop reference)
-    bool  mod      // FVG left by a qualified 5-minute-model structure break
+    bool  fromModel      // FVG left by a qualified 5-minute-model structure break
     bool  used
     box   bx
     line  mid
@@ -480,6 +505,8 @@ type Liq
     int   brk
 
 var array<Liq> liqs = array.new<Liq>()
+var int lastSmtBull = na
+var int lastSmtBear = na
 var array<Zone> zones = array.new<Zone>()
 var array<Zone> pend  = array.new<Zone>()
 var array<box>   tBoxes  = array.new<box>()
@@ -536,6 +563,9 @@ f_grade(int dir) =>
     string g = tot < 3 ? "B" : st == tot ? "A+" : st == tot - 1 ? "A" : "B"
     if timeGrade and isIntra and not (inKZ or inSB or inPM)
         g := g == "A+" ? "A" : "B"
+    bool smtNow = dir == 1 ? (not na(lastSmtBull) and bar_index - lastSmtBull <= smtLook) : (not na(lastSmtBear) and bar_index - lastSmtBear <= smtLook)
+    if useSMT and smtNow
+        g := g == "B" ? "A" : "A+"
     g
 
 f_riskPct(int dir) =>
@@ -662,8 +692,8 @@ f_plan(Zone z) =>
     float mid = (z.top + z.bot) / 2
     float entry = entryMode == "Zone edge" ? (z.dir == 1 ? z.top : z.bot) : entryMode == "50% mean" ? mid : close
     float buf = slBuf * atr
-    float ctxLong = not na(ctxBullBot) ? math.min(ctxBullBot, z.bot) : math.min(z.ext, z.bot)
-    float ctxShort = not na(ctxBearTop) ? math.max(ctxBearTop, z.top) : math.max(z.ext, z.top)
+    float ctxLong = math.min(nz(ctxBullBot, z.bot), z.bot, nz(z.ext, z.bot))
+    float ctxShort = math.max(nz(ctxBearTop, z.top), z.top, nz(z.ext, z.top))
     bool cont = syncTrend == z.dir
     bool useCtx = stopMode == "Context POI" or (stopMode == "Auto" and not cont)
     bool useExt = not useCtx and (stopMode == "Zone extreme" or stopMode == "Auto")
@@ -812,7 +842,117 @@ if nLiq > 0
 bool recentSsl = not na(lastSslSweep) and bar_index - lastSslSweep <= sweepLook
 bool recentBsl = not na(lastBslSweep) and bar_index - lastBslSweep <= sweepLook
 
+// SMT divergence: one asset makes a new swing extreme, the correlated one clearly does not, at a key level
+// (inside a context POI, or right after a liquidity sweep). Same timeframe on both charts.
+[cHigh, cLow] = request.security(smtSym, timeframe.period, [high, low], lookahead = barmerge.lookahead_off)
+float lowN   = ta.lowest(low, smtLen)[1]
+float highN  = ta.highest(high, smtLen)[1]
+float cLowN  = ta.lowest(cLow, smtLen)[1]
+float cHighN = ta.highest(cHigh, smtLen)[1]
+bool newLowA  = low < lowN
+bool newLowB  = cLow < cLowN
+bool newHighA = high > highN
+bool newHighB = cHigh > cHighN
+bool keyBull = (not na(ctxBullTop) and low <= ctxBullTop and high >= ctxBullBot) or recentSsl
+bool keyBear = (not na(ctxBearTop) and high >= ctxBearBot and low <= ctxBearTop) or recentBsl
+bool smtBull = useSMT and keyBull and ((newLowA and not newLowB and cLow > cLowN * (1 + smtGap / 100)) or (newLowB and not newLowA and low > lowN * (1 + smtGap / 100)))
+bool smtBear = useSMT and keyBear and ((newHighA and not newHighB and cHigh < cHighN * (1 - smtGap / 100)) or (newHighB and not newHighA and high < highN * (1 - smtGap / 100)))
+if smtBull
+    lastSmtBull := bar_index
+    label.new(bar_index, low, "SMT ↑", style = label.style_label_up, color = color.new(colBull, 75), textcolor = colBull, size = size.tiny)
+if smtBear
+    lastSmtBear := bar_index
+    label.new(bar_index, high, "SMT ↓", style = label.style_label_down, color = color.new(colBear, 75), textcolor = colBear, size = size.tiny)
+
+// ───────────── Episode 22: liquidity map and daily bias checklist ─────────────
+[prevDH, prevDL, prevDC] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead = barmerge.lookahead_on)
+[prevWH, prevWL] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+[prevMH, prevML] = request.security(syminfo.tickerid, "M", [high[1], low[1]], lookahead = barmerge.lookahead_on)
+bool newDay   = ta.change(time("D")) != 0
+bool newWeek  = ta.change(time("W")) != 0
+bool newMonth = ta.change(time("M")) != 0
+var float curDH = na
+var float curDL = na
+var float curWH = na
+var float curWL = na
+var float curMH = na
+var float curML = na
+curDH := newDay ? high : math.max(nz(curDH, high), high)
+curDL := newDay ? low : math.min(nz(curDL, low), low)
+curWH := newWeek ? high : math.max(nz(curWH, high), high)
+curWL := newWeek ? low : math.min(nz(curWL, low), low)
+curMH := newMonth ? high : math.max(nz(curMH, high), high)
+curML := newMonth ? low : math.min(nz(curML, low), low)
+bool dHiSw = curDH > prevDH
+bool dLoSw = curDL < prevDL
+bool wHiSw = curWH > prevWH
+bool wLoSw = curWL < prevWL
+bool mHiSw = curMH > prevMH
+bool mLoSw = curML < prevML
+
+// Step 1 of the checklist: where is the higher-timeframe draw on liquidity? A swept high points down,
+// a swept low points up; if neither is swept, the nearer one.
+f_draw(bool hiSw, bool loSw, float hi, float lo) =>
+    int d = 0
+    if hiSw and not loSw
+        d := -1
+    else if loSw and not hiSw
+        d := 1
+    else if not hiSw and not loSw and not na(hi) and not na(lo)
+        d := (hi - close) < (close - lo) ? 1 : -1
+    d
+
+int wkDraw = f_draw(wHiSw, wLoSw, prevWH, prevWL)
+int drawDir = wkDraw != 0 ? wkDraw : f_draw(mHiSw, mLoSw, prevMH, prevML)
+// Step 2: where did yesterday's daily candle close inside its own range?
+float rngD = prevDH - prevDL
+float closePos = rngD > 0 ? (prevDC - prevDL) / rngD : na
+bool noBiasDay = not na(closePos) and closePos > closeEdge and closePos < 1 - closeEdge
+bool wkDiscount = not na(dirHi) and not na(dirLo) and dirHi > dirLo and close < (dirHi + dirLo) / 2
+bool wkPremium  = not na(dirHi) and not na(dirLo) and dirHi > dirLo and close > (dirHi + dirLo) / 2
+// Step 3: has the manipulation already happened, and was it early or late in the day?
+bool earlyDay = isIntra ? (time - time("D")) / 3600000 < earlyHours : true
+bool bullSweepOK = not dLoSw or earlyDay
+bool bearSweepOK = not dHiSw or earlyDay
+int dailyBias = 0
+if not na(closePos) and not noBiasDay
+    if drawDir == 1 and closePos <= closeEdge and dirTrend == 1 and wkDiscount and bullSweepOK
+        dailyBias := 1
+    if drawDir == -1 and closePos >= 1 - closeEdge and dirTrend == -1 and wkPremium and bearSweepOK
+        dailyBias := -1
+
+float prevWMid = (prevWH + prevWL) / 2
+plot(showMap ? prevDH : na, "Previous day high", color = dHiSw ? color.new(colLiq, 85) : color.new(colBear, 40), style = plot.style_linebr)
+plot(showMap ? prevDL : na, "Previous day low", color = dLoSw ? color.new(colLiq, 85) : color.new(colBull, 40), style = plot.style_linebr)
+plot(showMap ? prevWH : na, "Previous week high", color = wHiSw ? color.new(colLiq, 80) : color.new(colBear, 20), linewidth = 2, style = plot.style_linebr)
+plot(showMap ? prevWL : na, "Previous week low", color = wLoSw ? color.new(colLiq, 80) : color.new(colBull, 20), linewidth = 2, style = plot.style_linebr)
+plot(showMap ? prevMH : na, "Previous month high", color = mHiSw ? color.new(colLiq, 75) : color.new(colBear, 0), linewidth = 3, style = plot.style_linebr)
+plot(showMap ? prevML : na, "Previous month low", color = mLoSw ? color.new(colLiq, 75) : color.new(colBull, 0), linewidth = 3, style = plot.style_linebr)
+plot(showMap ? prevWMid : na, "Previous week 50%", color = color.new(colMSS, 60), style = plot.style_linebr)
+
 // ───────────────────────── Fair value gaps ─────────────────────────
+// Episode 23: a Wyckoff spring / UTAD is just an AMD cycle inside a compressed range: one side is swept and
+// reclaimed, then structure breaks the other way. Chart patterns are descriptions of liquidity plus structure.
+float amdHi = ta.highest(high, amdN)[1]
+float amdLo = ta.lowest(low, amdN)[1]
+bool tightRange = (amdHi - amdLo) <= amdMult * atr
+var int springBar = na
+var int utadBar = na
+if showAMD and tightRange and low < amdLo and close > amdLo
+    springBar := bar_index
+if showAMD and tightRange and high > amdHi and close < amdHi
+    utadBar := bar_index
+bool amdBull = false
+bool amdBear = false
+if showAMD and bullBrk and not na(springBar) and bar_index - springBar <= amdWindow
+    amdBull := true
+    springBar := na
+    label.new(bar_index, low, "AMD ↑ spring", style = label.style_label_up, color = color.new(colBull, 75), textcolor = colBull, size = size.tiny)
+if showAMD and bearBrk and not na(utadBar) and bar_index - utadBar <= amdWindow
+    amdBear := true
+    utadBar := na
+    label.new(bar_index, high, "AMD ↓ UTAD", style = label.style_label_down, color = color.new(colBear, 75), textcolor = colBear, size = size.tiny)
+
 // Step 1 of the 5-minute model: price must trade INTO the context-timeframe POI, not just near it.
 var int lastTagL = na
 var int lastTagS = na
@@ -834,7 +974,7 @@ if (showFVG or modelOn) and fvgBull
         f_addZone(low, high[2], 1, 2, sc, bar_index - 2, low[2], false)
         if modelOn and not na(mBullBrk) and bar_index - mBullBrk <= 3
             Zone lz = array.get(zones, array.size(zones) - 1)
-            lz.mod := true
+            lz.fromModel := true
             lz.ext := modelExtBull
 if (showFVG or modelOn) and fvgBear
     float m = (high + low[2]) / 2
@@ -843,7 +983,7 @@ if (showFVG or modelOn) and fvgBear
         f_addZone(low[2], high, -1, 2, sc, bar_index - 2, high[2], false)
         if modelOn and not na(mBearBrk) and bar_index - mBearBrk <= 3
             Zone lz = array.get(zones, array.size(zones) - 1)
-            lz.mod := true
+            lz.fromModel := true
             lz.ext := modelExtBear
 
 // ───────────────────────── Order blocks from structure breaks ─────────────────────────
@@ -864,7 +1004,7 @@ if modelOn and bullBrk and not na(lastTagL) and bar_index - lastTagL <= tagLook 
         for k = 0 to array.size(zones) - 1
             Zone fz = array.get(zones, k)
             if fz.kind == 2 and fz.dir == 1 and fz.cb >= bullAnchor
-                fz.mod := true
+                fz.fromModel := true
                 fz.ext := legExt
 if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook and (not reqDisp or f_disp(-1))
     mBearBrk := bar_index
@@ -876,7 +1016,7 @@ if modelOn and bearBrk and not na(lastTagS) and bar_index - lastTagS <= tagLook 
         for k = 0 to array.size(zones) - 1
             Zone fz = array.get(zones, k)
             if fz.kind == 2 and fz.dir == -1 and fz.cb >= bearAnchor
-                fz.mod := true
+                fz.fromModel := true
                 fz.ext := legExt
 
 // ───────────────────────── Zone maintenance and setup signals ─────────────────────────
@@ -888,16 +1028,24 @@ var int losses = 0
 var int consecLoss = 0
 var int lastLossBar = na
 var int lastChase = na
+var int sigToday = 0
 if tiltN > 0 and consecLoss >= tiltN and not na(lastLossBar) and bar_index - lastLossBar > tiltCool
     consecLoss := 0
 bool tiltBlocked = tiltN > 0 and consecLoss >= tiltN
+if newDay
+    sigToday := 0
+bool capHit = maxDaily > 0 and sigToday >= maxDaily
 
 // Timing / discipline gates: kill zone, silver bullet, news window, tilt guard.
-bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and (not reqCrypto or inCrypto) and not inNews and not tiltBlocked
+bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and (not reqCrypto or inCrypto) and not inNews and not tiltBlocked and not capHit
 [stkLn, stkLt] = f_stack(1)
 [stkSn, stkSt] = f_stack(-1)
-bool stkL      = stkLn >= minStack
-bool stkS      = stkSn >= minStack
+bool smtOKL    = not reqSMT or (not na(lastSmtBull) and bar_index - lastSmtBull <= smtLook)
+bool smtOKS    = not reqSMT or (not na(lastSmtBear) and bar_index - lastSmtBear <= smtLook)
+bool biasOKL   = (not reqBias or dailyBias == 1) and not (skipNoBias and noBiasDay)
+bool biasOKS   = (not reqBias or dailyBias == -1) and not (skipNoBias and noBiasDay)
+bool stkL      = stkLn >= minStack and smtOKL and biasOKL
+bool stkS      = stkSn >= minStack and smtOKS and biasOKS
 bool confL     = not reqConfirm or syncTrend == 1 or ctxTrend == 1 or setupTrend == 1
 bool confS     = not reqConfirm or syncTrend == -1 or ctxTrend == -1 or setupTrend == -1
 bool sweepOKL = not reqSweep or recentSsl
@@ -927,12 +1075,12 @@ if nZ > 0
                 kill := true
             if z.dir == -1 and close > z.top
                 kill := true
-            if z.kind == 2 and modelOn and not showFVG and not z.mod and bar_index - z.cb > 60
+            if z.kind == 2 and modelOn and not showFVG and not z.fromModel and bar_index - z.cb > 60
                 kill := true
-            if z.kind == 2 and z.mod and not z.used and bar_index > z.cb and ((z.dir == 1 and high > z.top + missRun * atr) or (z.dir == -1 and low < z.bot - missRun * atr))
+            if z.kind == 2 and z.fromModel and not z.used and bar_index > z.cb and ((z.dir == 1 and high > z.top + missRun * atr) or (z.dir == -1 and low < z.bot - missRun * atr))
                 kill := true
                 lastChase := bar_index
-        bool modelZone = modelOn and z.kind == 2 and z.mod
+        bool modelZone = modelOn and z.kind == 2 and z.fromModel
         bool generalZone = not modelOn and z.score >= minScoreEnt and (z.kind < 2 or fvgEntries)
         if kill
             f_removeZone(z)
@@ -1038,6 +1186,9 @@ if not na(bestS) and not longSig
         sigRR := rrUse
         f_drawTrade(-1, en, slUse, tp, rrUse, bestS.score, tg, bestS.top, bestS.bot, fr, u0)
 
+if longSig or shortSig
+    sigToday += 1
+
 int nTr = array.size(trDir)
 if nTr > 0
     for k = 1 to nTr
@@ -1067,7 +1218,7 @@ plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, s
 plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.small, text = "S")
 
 // ───────────────────────────── Dashboard ─────────────────────────────
-var table dash = table.new(dashPos, 2, 15, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+var table dash = table.new(dashPos, 2, 17, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
 
 f_tick(bool ok) => ok ? "✓" : "✗"
 
@@ -1086,7 +1237,7 @@ if showDash and barstate.islast
     if dirC != 0 and array.size(zones) > 0
         for k = 0 to array.size(zones) - 1
             Zone zz = array.get(zones, k)
-            bool okZ = modelOn ? (zz.kind == 2 and zz.mod) : (zz.score >= minScoreEnt and (zz.kind < 2 or fvgEntries))
+            bool okZ = modelOn ? (zz.kind == 2 and zz.fromModel) : (zz.score >= minScoreEnt and (zz.kind < 2 or fvgEntries))
             if zz.dir == dirC and okZ and (na(bz) or zz.score > bz.score)
                 bz := zz
     bool modelOK = not na(bz) and trend == dirC
@@ -1120,19 +1271,25 @@ if showDash and barstate.islast
     table.cell(dash, 0, 9, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 9, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
     bool chased = not na(lastChase) and bar_index - lastChase <= 30
-    string dq = dirC == 0 ? "1 No clear bias" : not locOKd ? "2 Wrong zone" : not rrOK ? "3 No target / under " + str.tostring(minRR, "#.#") + "R" : not modelOK ? "4 Model incomplete" : chased ? "5 Missed entry (no chase)" : inNews ? "6 News window" : tiltBlocked ? "7 Tilt guard" : "None"
-    bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK and not inNews and not tiltBlocked
+    string dq = dirC == 0 ? "1 No clear bias" : not locOKd ? "2 Wrong zone" : not rrOK ? "3 No target / under " + str.tostring(minRR, "#.#") + "R" : not modelOK ? "4 Model incomplete" : chased ? "5 Missed entry (no chase)" : inNews ? "6 News window" : tiltBlocked ? "7 Tilt guard" : capHit ? "8 Daily signal cap" : "None"
+    bool allOK = dirC != 0 and syncTFOK and confOK and locOKd and poiExists and poiTagged and modelOK and rrOK and not inNews and not tiltBlocked and not capHit
     table.cell(dash, 0, 10, "No-trade filter", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = size.small)
     table.cell(dash, 0, 12, "Size at " + str.tostring(f_riskPct(dirC), "#.##") + "% risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")", text_color = color.white, text_size = size.small)
+    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")" + (f_riskPct(dirC) > 2 ? " - above 2%, oversizing risk" : ""), text_color = f_riskPct(dirC) > 2 ? colBear : color.white, text_size = size.small)
     string grade = dirC != 0 ? f_grade(dirC) : "-"
     table.cell(dash, 0, 13, "Range stack W/D/4H/1H", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 13, f_letter(dirHi, dirLo) + " " + f_letter(syncHi, syncLo) + " " + f_letter(ctxHi, ctxLo) + " " + f_letter(setupHi, setupLo) + "  grade " + grade, text_color = grade == "A+" or grade == "A" ? colBull : colLiq, text_size = size.small)
-    table.cell(dash, 0, 14, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
-    table.cell(dash, 1, 14, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    bool smtSeen = dirC == 1 ? (not na(lastSmtBull) and bar_index - lastSmtBull <= smtLook) : dirC == -1 ? (not na(lastSmtBear) and bar_index - lastSmtBear <= smtLook) : false
+    table.cell(dash, 0, 14, "SMT vs " + (useSMT ? str.tostring(smtSym) : "off"), text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 14, not useSMT ? "off" : smtSeen ? "Divergence (grade up)" : "None (optional)", text_color = smtSeen ? colBull : colLiq, text_size = size.small)
+    string biasTxt = noBiasDay ? "No-bias day (mid close)" : dailyBias == 1 ? "Bullish" : dailyBias == -1 ? "Bearish" : "Unclear"
+    table.cell(dash, 0, 15, "Daily bias (ep 22)", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 15, biasTxt + " | draw " + (drawDir == 1 ? "up" : drawDir == -1 ? "down" : "-") + ", close " + (na(closePos) ? "n/a" : str.tostring(closePos * 100, "#") + "%"), text_color = dailyBias == 1 ? colBull : dailyBias == -1 ? colBear : colLiq, text_size = size.small)
+    table.cell(dash, 0, 16, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 16, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")
@@ -1141,6 +1298,9 @@ alertcondition(bullBrk and bullMSS, "TM bullish MSS", "Bullish market structure 
 alertcondition(bearBrk and bearMSS, "TM bearish MSS", "Bearish market structure shift on {{ticker}} ({{interval}})")
 alertcondition(sweepBull, "TM sell-side sweep", "Sell-side liquidity swept on {{ticker}} ({{interval}})")
 alertcondition(sweepBear, "TM buy-side sweep", "Buy-side liquidity swept on {{ticker}} ({{interval}})")
+alertcondition(amdBull or amdBear, "TM range AMD", "Range sweep and structure break (spring / UTAD style AMD) on {{ticker}} ({{interval}})")
+alertcondition(smtBull, "TM bullish SMT", "Bullish SMT divergence at a key level on {{ticker}} ({{interval}})")
+alertcondition(smtBear, "TM bearish SMT", "Bearish SMT divergence at a key level on {{ticker}} ({{interval}})")
 alertcondition(inNews and not inNews[1], "TM news window starting", "News window starting on {{ticker}}: no new entries, manage open trades")
 alertcondition(inLon and not inLon[1], "TM London kill zone starting", "London kill zone starting on {{ticker}}")
 alertcondition(inNY and not inNY[1], "TM New York kill zone starting", "New York kill zone starting on {{ticker}}")

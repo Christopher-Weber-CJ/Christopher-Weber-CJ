@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.8, built from episodes 1-20 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.13, built from all 25 episodes. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -33,6 +33,11 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 18 | News is the driver, liquidity is the destination. Know the calendar, no new entries before news, manage what you have, let the candle close, trade the aftermath. | News window, `NEWS` sweep tags, news-start alert. See below. |
 | 19 | Nested ranges, range resets only on displacement, stacking premium / discount across timeframes for A+ setups | Range stack row, A+ / A / B grade, displacement-only resets. See below. |
 | 20 | Time and price: kill zones, silver bullet windows, crypto trading day, time as a filter and grade, never an entry on its own | Confirmed session times, afternoon window, crypto window, time-based grade downgrade. See below. |
+| 21 | SMT divergence between correlated assets at key levels, as a filter that upgrades conviction, not a signal | Optional SMT check, grade upgrade and filter. See below. |
+| 22 | Liquidity-to-liquidity map, daily bias checklist, premium is not a short signal, trigger proves the level | Previous day / week / month liquidity, daily bias row, optional bias filter. See below. |
+| 23 | Chart patterns (Wyckoff, head and shoulders, double tops, wedges, flags) are snapshots of liquidity plus market structure; patterns lag, context decides | Range AMD marker, plus the existing sweeps, EQH / EQL and structure breaks. See below. |
+| 24 | Full trade review: weekly to hourly to 5m, stop at the sweep high for reversals, partials at internal liquidity, runner for the higher-timeframe idea | Reversal stop now also goes beyond the sweep extreme; partial size up to two-thirds. See below. |
+| 25 | Where traders fail: oversizing, lottery brain, no measurement, overtrading, revenge trading, system hopping, quitting, complacency | Guard-rails only. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -104,17 +109,54 @@ No zone tag, no displacement, or under 2R means no signal. The dashboard shows w
 - Judas markers now say whether the Asian-range sweep happened in the London or New York window (his pattern: London manipulation, New York distribution). Alerts fire when the London and New York kill zones start.
 - He points out that back-testing pattern-only setups overstates results because many losers happen outside these windows.
 
+**SMT divergence (episode 21).** Off by default. He says SMT is a nice-to-have that upgrades a B+ / A setup to A+, never a signal on its own, and that plain SMT indicators are noisy because they mark every disagreement. So this one is deliberately narrow:
+- Turn it on and pick a correlated symbol (BTC vs ETH, NQ vs ES, EURUSD vs GBPUSD). It compares the same timeframe on both charts.
+- It only counts **at a key level** (price inside a context-timeframe POI, or right after a liquidity sweep), and only when one asset makes a new swing extreme over the window while the other **clearly** does not (default: it must hold 0.1% beyond its prior extreme).
+- A bullish or bearish `SMT` marker is drawn, and the signal grade goes up one level while the SMT is recent. Optionally require it (off by default), because a setup without SMT is still a valid setup.
+- It says the move on the first chart was likely fake. It does not say which asset to trade or which is stronger. Pick whichever chart shows your model most cleanly.
+- Doing the same check by eye at your zone still takes about 10 seconds, and he recommends it.
+
+**Liquidity map and daily bias (episode 22).**
+- **Map:** the previous day, week and month highs and lows are plotted (thicker for higher timeframes). They dim once the current period has swept them, which is his "spent / unspent" marking. The previous week's 50% is also plotted, because after a daily sweep of a weekly level he found price pulls back to about that midpoint.
+- **Daily bias checklist**, all on the dashboard's *Daily bias* row. A bullish bias needs: the higher-timeframe draw above price (a swept low points up, a swept high points down, otherwise the nearer level); yesterday's daily candle closed in its bottom 10%; the weekly bullish; price in the weekly discount; and yesterday's low either still intact or swept early in the day (within 8 hours of the daily open). Bearish is the mirror image.
+- **No-bias day:** if yesterday closed in the middle of its range, the row says so. He says direction is a coin flip and a quarter of the time it is an inside day.
+- *Require the full daily bias* and *Skip no-bias days* can turn this into filters. Both are off by default, and the full bias is rare, since every item has to line up. A setup that fails it is not invalid, it is just not A+.
+- Premium and discount are still not sell and buy signals by themselves. The indicator only uses them as location filters, together with the trigger.
+
+**Statistics he quotes in that episode (his own tests on BTC, ETH and SOL, not verified here):** the current daily candle takes out the prior day's high or low about 80% of the time (about 84% weekly, 86% monthly); after a close in the top or bottom 10% of the range the next day takes out that extreme about 9 times in 10; after a daily sweep of a weekly level, price returns to the weekly candle's midpoint within five days about half the time and reverses all the way to the other side about one time in six; the same setup worked about 45% of the time in discount versus 37% in premium; a five-year hourly test of the basic level-buying strategy won about 33% (break-even at 2R) and adding the trigger lifted it to about 42%. Use them as context, and back-test on your own data.
+
+**Chart patterns (episode 23).** He argues you never need to memorise a pattern, because each one is a snapshot of liquidity and structure inside an accumulation-manipulation-distribution cycle. Nothing here trades a pattern by itself. What the indicator already draws covers them:
+- **Wyckoff accumulation / distribution** is a range where one side is swept and reclaimed, then structure breaks the other way. New *Range AMD* markers (`AMD ↑ spring`, `AMD ↓ UTAD`) fire when a compressed range (default 40 bars, at most 6 ATR tall) has one side swept and reclaimed and a structure break follows within 10 bars.
+- **Double tops / bottoms** are equal highs / lows, which the liquidity lines flag (`EQH` / `EQL`) and mark when swept.
+- **Head and shoulders** is a sweep of a shoulder, a failed higher high and a structure break. The neckline break is the structure break, and the signal still needs the higher-timeframe context (a neckline break in a bullish discount at an order block can be bait).
+- **Wedges, triangles and bull flags** build liquidity on both sides. The trend before them and the higher-timeframe draw decide the direction, which the bias and the range stack already show.
+- Patterns are lagging. The framework's signals use the bias, zone, liquidity and model instead.
+
+**Trade review (episode 24).** His walk-through is the framework applied end to end: weekly bearish, a weekly fair value gap in the premium, a daily flip to bearish, a sweep into a bearish order block, then an hourly (or 5m) breaker plus fair value gap. He states that with a reversal the stop goes at the sweep high, not the gap.
+- The *Auto* stop for reversals now goes beyond both the context POI and the swept leg extreme.
+- His exit was two partials: about two-thirds closed at internal liquidity on the entry timeframe, and the runner held for the weekly idea. Set *Partial size* to about 67 to draw that plan.
+- He risks a static $2,000 on a $100,000 account for the journal example (63 trades, about 55% wins, average winner about 2.8R). The size and risk inputs can be set the same way. Those figures are his, not results of this indicator.
+
+**Behaviour (episode 25).** Episode 25 is about the gap between knowing a system and running it. It teaches no chart rules, so the script only adds guard-rails for the failure modes that a chart tool can see:
+- **Oversizing:** the dashboard's size row turns red and warns when the risk % is above 2%. He notes that even a 60% edge can be wiped out by a losing streak if you over-bet, and that as the account grows you should keep thinking in % (one R) rather than the dollar amount.
+- **Overtrading:** *Overtrading guard* caps signals per day (off by default) and the dashboard shows "Daily signal cap" when it is hit. The many filters in the other episodes are the main defence, since he says a good filter means fewer trades.
+- **Revenge trading:** the tilt guard (episode 15) pauses signals after consecutive stopped-out signals.
+- **No measurement / complacency:** the dashboard counts wins and losses of the indicator's own signals (with 2R as the default win level), which is a starting point for journaling, not a replacement for it. He says a journal, and following the same checklist every time, is what stops cracks forming.
+- **Things a script cannot do:** hard stops, never widening or moving a stop early, not system-hopping, and staying with the process through a losing month. He measures early progress by whether you followed the system, not by P&L, and quotes roughly 1-3 years in the "tuition" phase and 3-5 years to consistent profitability. Those timelines are his opinion.
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 21-25, not read yet)
+## Known gaps and cautions
 
-Episodes 21-25 are:
-SMT divergence,
-liquidity trap and learning liquidity, best-trade breakdown, and trading psychology.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-20 were supplied by hand. Episodes 21-25 are **not** in the script yet.
+- All 25 episodes of the playlist have been read (episodes 1-11 downloaded, 12-25 supplied as transcripts). The script has **not** been compiled or run in TradingView, so expect a compile error or two on first load, and check every signal against a chart before trusting it.
+- Where his rules were discretionary (which swing is "significant", what counts as "clear and obvious", how deep a zone is), the script uses a fixed rule and numeric defaults that I chose. Tune them.
+- The higher-timeframe ranges use a plain major-swing rule. The displacement-only range reset (episode 19) applies to the chart range only.
+- His combined ladder (half the position at the touch of a daily zone, the rest on lower-timeframe models) is not automated.
+- News times and the calendar are entered by hand. Emotion, hard stops and journaling cannot be automated.
+- Statistics quoted in the episodes are his own tests and were not re-checked here.
 
 ## Alerts
 
