@@ -1,13 +1,14 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-17: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// Built from episodes 1-19: glossary, market structure, liquidity, dealing ranges, HTF bias,
 // fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
 // the four-step top-down process (direction -> context -> setup -> entry), and the five-minute
 // entry model (zone tag -> structure break -> displacement -> FVG pullback -> stop / target),
 // reversal vs continuation setups with H4/H1 confirmation, the 15-minute variant, the silver bullet window,
 // the seven no-trade disqualifiers, and the risk framework (stop = invalidation, position sizing,
 // 2R exits with partials at internal liquidity, break-even win-rate math), and scaling in
-// (split the same risk across a zone, or add only on new confirmed models).
+// (split the same risk across a zone, or add only on new confirmed models), news as a liquidity
+// driver, and nested dealing ranges (range stacking, displacement-only range resets).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -29,6 +30,7 @@ htfMajor     = input.int(5, "HTF major swing length", minval = 2, maxval = 30, g
 setupTF      = input.timeframe("60", "Step 3 - setup timeframe (H1): confirmation", group = G_HTF)
 allowRev     = input.bool(true, "Allow reversal setups when the sync timeframe still disagrees (needs H4 / H1 confirmation)", group = G_HTF)
 reqConfirm   = input.bool(true, "Require H4 / H1 confirmation unless the sync timeframe already agrees", group = G_HTF)
+minStack     = input.int(0, "Require at least N of the 4 higher-timeframe ranges (W / D / H4 / H1) on the correct side of equilibrium", minval = 0, maxval = 4, tooltip = "Episode 19 stacking: longs want discount on every timeframe, shorts want premium. 0 = off (the stack is still graded and shown).", group = G_HTF)
 reqPOI       = input.bool(true, "Require the entry zone to sit inside a context-timeframe POI", group = G_HTF)
 pdSource     = input.string("Sync TF range", "Premium / discount source", options = ["Sync TF range", "Direction TF range", "Chart range"], group = G_HTF)
 showHTFRange = input.bool(true, "Plot higher-timeframe ranges and context POIs", group = G_HTF)
@@ -39,6 +41,7 @@ showPD    = input.bool(true, "Shade premium / discount", group = G_RNG)
 showOTE   = input.bool(true, "Show OTE zone", group = G_RNG)
 oteLo     = input.float(0.62, "OTE start (0.618 → 0.62)", minval = 0.5, maxval = 0.9, step = 0.005, group = G_RNG)
 oteHi     = input.float(0.79, "OTE end (0.786 → 0.79)", minval = 0.5, maxval = 0.95, step = 0.005, group = G_RNG)
+showOldRange = input.bool(true, "Mark the old range high / low after a displacement reset", group = G_RNG)
 sweetSpot = input.float(0.705, "Sweet spot", minval = 0.5, maxval = 0.95, step = 0.005, group = G_RNG)
 
 G_POI = "Points of interest (OB / breaker / FVG)"
@@ -96,6 +99,8 @@ G_RSK = "Risk and exits (episode 16)"
 acct     = input.float(100000, "Account size", minval = 1, group = G_RSK)
 riskPct  = input.float(1.0, "Risk per trade (%)  (his range: 0.5 - 2)", minval = 0.05, maxval = 10, step = 0.05, group = G_RSK)
 winAt    = input.string("2R", "Count a signal as a win at", options = ["2R", "Full target"], tooltip = "His journal closes the trade at 2R. Full target = the external liquidity target.", group = G_RSK)
+useGrades  = input.bool(false, "Grade setups by range stack and risk more on A+ (episode 19)", group = G_RSK)
+riskAPlus  = input.float(2.0, "Risk % for an A+ (fully stacked) setup", minval = 0.05, maxval = 10, step = 0.05, group = G_RSK)
 showPart = input.bool(true, "Show a partial-profit level at internal liquidity", group = G_RSK)
 partPct  = input.float(25, "Partial size (%) - he uses 25% or 33%", minval = 5, maxval = 50, group = G_RSK)
 scaleMode  = input.string("Single entry", "Entry scaling (episode 17)", options = ["Single entry", "Scale in zone", "Add on confirmation"], tooltip = "Scaling splits the SAME risk into pieces, it never adds risk. Single entry = one order (his advice until you are comfortable). Scale in zone = top / middle / bottom of the zone. Add on confirmation = smaller first entry, then adds only when a new, separate model forms.", group = G_RSK)
@@ -222,6 +227,7 @@ f_ctx(float o, float h, float l, float c) =>
 [dirTrend, dirHi, dirLo, dirER]     = request.security(syminfo.tickerid, dirTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 [syncTrend, syncHi, syncLo, syncER]  = request.security(syminfo.tickerid, syncTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 [ctxBullTop, ctxBullBot, ctxBearTop, ctxBearBot, ctxTrend] = request.security(syminfo.tickerid, ctxTF, f_ctx(open[1], high[1], low[1], close[1]), lookahead = barmerge.lookahead_off)
+[ctxTrend2, ctxHi, ctxLo, ctxER] = request.security(syminfo.tickerid, ctxTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 [setupTrend, setupHi, setupLo, setupER] = request.security(syminfo.tickerid, setupTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
 
 // ───────────────────────────── Core series ─────────────────────────────
@@ -288,14 +294,35 @@ var float rLo = na
 var int   rHiBar = na
 var int   rLoBar = na
 bool rangeChanged = false
+// Episode 19: a range only resets on expansion WITH displacement. A sweep / SFP / deviation leaves it in place.
+var bool expUp = false
+var bool expDn = false
+if not na(rHi) and close > rHi and close > open and bodyBig
+    expUp := true
+if not na(rLo) and close < rLo and close < open and bodyBig
+    expDn := true
 if not na(mph)
-    rHi := mph
-    rHiBar := bar_index - majorN
-    rangeChanged := true
+    float oldHi = rHi
+    if na(oldHi) or mph <= oldHi or expUp
+        if not na(oldHi) and mph > oldHi
+            expUp := false
+            if showOldRange
+                line.new(rHiBar, oldHi, bar_index, oldHi, extend = extend.right, color = color.new(colLiq, 40), style = line.style_dotted)
+                label.new(bar_index, oldHi, "old range high", style = label.style_label_down, color = color.new(colLiq, 85), textcolor = colLiq, size = size.tiny)
+        rHi := mph
+        rHiBar := bar_index - majorN
+        rangeChanged := true
 if not na(mpl)
-    rLo := mpl
-    rLoBar := bar_index - majorN
-    rangeChanged := true
+    float oldLo = rLo
+    if na(oldLo) or mpl >= oldLo or expDn
+        if not na(oldLo) and mpl < oldLo
+            expDn := false
+            if showOldRange
+                line.new(rLoBar, oldLo, bar_index, oldLo, extend = extend.right, color = color.new(colLiq, 40), style = line.style_dotted)
+                label.new(bar_index, oldLo, "old range low", style = label.style_label_up, color = color.new(colLiq, 85), textcolor = colLiq, size = size.tiny)
+        rLo := mpl
+        rLoBar := bar_index - majorN
+        rangeChanged := true
 
 bool chartRangeOK = not na(rHi) and not na(rLo) and rHi > rLo
 bool dirRangeOK  = useHTF and not na(dirHi) and not na(dirLo) and dirHi > dirLo
@@ -466,6 +493,46 @@ f_loc(int dir, float mid) =>
             s += 1
     s
 
+// Range stacking (episode 19): how many of the weekly / daily / H4 / H1 ranges have price on the
+// side of equilibrium that favours the trade (discount for longs, premium for shorts).
+f_inZone(float hi, float lo, int dir) =>
+    float z = na
+    if not na(hi) and not na(lo) and hi > lo
+        float m = (hi + lo) / 2
+        z := ((dir == 1 and close < m) or (dir == -1 and close > m)) ? 1.0 : 0.0
+    z
+
+f_stack(int dir) =>
+    int st = 0
+    int tot = 0
+    float a = f_inZone(dirHi, dirLo, dir)
+    float b = f_inZone(syncHi, syncLo, dir)
+    float c = f_inZone(ctxHi, ctxLo, dir)
+    float d = f_inZone(setupHi, setupLo, dir)
+    if not na(a)
+        tot += 1
+        st += int(a)
+    if not na(b)
+        tot += 1
+        st += int(b)
+    if not na(c)
+        tot += 1
+        st += int(c)
+    if not na(d)
+        tot += 1
+        st += int(d)
+    [st, tot]
+
+f_grade(int dir) =>
+    [st, tot] = f_stack(dir)
+    tot < 3 ? "B" : st == tot ? "A+" : st == tot - 1 ? "A" : "B"
+
+f_riskPct(int dir) =>
+    (useGrades and f_grade(dir) == "A+") ? riskAPlus : riskPct
+
+f_letter(float hi, float lo) =>
+    (na(hi) or na(lo) or hi <= lo) ? "-" : close < (hi + lo) / 2 ? "D" : "P"
+
 f_disp(int dir) =>
     float need = dispMult * atr
     bool ok = false
@@ -599,7 +666,7 @@ f_plan(Zone z) =>
 
 f_drawTrade(int dir, float en, float sl, float tp, float rr, int score, string tag, float zTop, float zBot, float frac, float u0in) =>
     int r = bar_index + 15
-    float riskAmt = acct * riskPct / 100
+    float riskAmt = acct * f_riskPct(dir) / 100
     float risk = math.abs(en - sl)
     float t1 = en + dir * minRR * risk
     string sizeTxt = ""
@@ -720,7 +787,7 @@ if nLiq > 0
                 sweepBull := true
                 lastSslSweep := bar_index
             if showSweeps
-                label.new(bar_index, l.side == 1 ? high : low, (l.eq ? "EQ " : "") + how + (l.side == 1 ? " ↓" : " ↑"),
+                label.new(bar_index, l.side == 1 ? high : low, (inNews ? "NEWS " : "") + (l.eq ? "EQ " : "") + how + (l.side == 1 ? " ↓" : " ↑"),
                      style = l.side == 1 ? label.style_label_down : label.style_label_up,
                      color = color.new(l.side == 1 ? colBear : colBull, 75), textcolor = l.side == 1 ? colBear : colBull, size = size.tiny)
         if done
@@ -816,6 +883,10 @@ bool tiltBlocked = tiltN > 0 and consecLoss >= tiltN
 
 // Timing / discipline gates: kill zone, silver bullet, news window, tilt guard.
 bool kzOK     = (not reqKZ or inKZ) and (not reqSB or inSB) and not inNews and not tiltBlocked
+[stkLn, stkLt] = f_stack(1)
+[stkSn, stkSt] = f_stack(-1)
+bool stkL      = stkLn >= minStack
+bool stkS      = stkSn >= minStack
 bool confL     = not reqConfirm or syncTrend == 1 or ctxTrend == 1 or setupTrend == 1
 bool confS     = not reqConfirm or syncTrend == -1 or ctxTrend == -1 or setupTrend == -1
 bool sweepOKL = not reqSweep or recentSsl
@@ -862,13 +933,13 @@ if nZ > 0
                 bool touched = low <= trig and close >= mid
                 bool locOK = not reqPD or (not na(pdMid) and mid < pdMid)
                 bool poiOK = modelZone or not reqPOI or (not na(ctxBullTop) and z.bot <= ctxBullTop and z.top >= ctxBullBot)
-                if touched and locOK and poiOK and confL and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
+                if touched and locOK and poiOK and confL and stkL and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
                     bestL := z
             if z.dir == -1 and (allowCtr or biasDir == -1) and (not reqSync or trend == -1)
                 bool touched = high >= trig and close <= mid
                 bool locOK = not reqPD or (not na(pdMid) and mid > pdMid)
                 bool poiOK = modelZone or not reqPOI or (not na(ctxBearTop) and z.top >= ctxBearBot and z.bot <= ctxBearTop)
-                if touched and locOK and poiOK and confS and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
+                if touched and locOK and poiOK and confS and stkS and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
                     bestS := z
 
 if array.size(pend) > 0
@@ -905,7 +976,7 @@ if not na(bestL)
         bestL.used := true
         float fr = 1.0
         float u0 = na
-        string tg = (syncTrend == 1 ? "CONT" : "REV") + (inSB ? " SB" : "")
+        string tg = (syncTrend == 1 ? "CONT" : "REV") + (inSB ? " SB" : "") + " " + f_grade(1)
         if scaleMode == "Add on confirmation"
             if isAdd
                 campN += 1
@@ -917,7 +988,7 @@ if not na(bestL)
                 campDir := 1
                 campN := 1
                 campStop := slUse
-                campU0 := acct * riskPct / 100 / math.abs(en - slUse)
+                campU0 := acct * f_riskPct(1) / 100 / math.abs(en - slUse)
                 fr := firstPct / 100
                 u0 := campU0
         sigEntry := en
@@ -935,7 +1006,7 @@ if not na(bestS) and not longSig
         bestS.used := true
         float fr = 1.0
         float u0 = na
-        string tg = (syncTrend == -1 ? "CONT" : "REV") + (inSB ? " SB" : "")
+        string tg = (syncTrend == -1 ? "CONT" : "REV") + (inSB ? " SB" : "") + " " + f_grade(-1)
         if scaleMode == "Add on confirmation"
             if isAdd
                 campN += 1
@@ -947,7 +1018,7 @@ if not na(bestS) and not longSig
                 campDir := -1
                 campN := 1
                 campStop := slUse
-                campU0 := acct * riskPct / 100 / math.abs(en - slUse)
+                campU0 := acct * f_riskPct(-1) / 100 / math.abs(en - slUse)
                 fr := firstPct / 100
                 u0 := campU0
         sigEntry := en
@@ -985,7 +1056,7 @@ plotshape(longSig, "Long setup", shape.triangleup, location.belowbar, colBull, s
 plotshape(shortSig, "Short setup", shape.triangledown, location.abovebar, colBear, size = size.small, text = "S")
 
 // ───────────────────────────── Dashboard ─────────────────────────────
-var table dash = table.new(dashPos, 2, 14, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
+var table dash = table.new(dashPos, 2, 15, border_width = 1, frame_color = color.new(colLiq, 60), border_color = color.new(colLiq, 80), bgcolor = color.new(color.black, 20))
 
 f_tick(bool ok) => ok ? "✓" : "✗"
 
@@ -1013,7 +1084,7 @@ if showDash and barstate.islast
     if not na(bz)
         [pe, ps, pt, pr] = f_plan(bz)
         planRR := pr
-        planSize = math.abs(pe - ps) > 0 ? (acct * riskPct / 100) / math.abs(pe - ps) : na
+        planSize = math.abs(pe - ps) > 0 ? (acct * f_riskPct(dirC) / 100) / math.abs(pe - ps) : na
     bool rrOK = not na(planRR) and planRR >= minRR
     string sess = (inSB ? "Silver bullet / " : "") + (inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "-")
 
@@ -1044,10 +1115,13 @@ if showDash and barstate.islast
     table.cell(dash, 1, 10, dq, text_color = dq == "None" ? colBull : colBear, text_size = size.small)
     table.cell(dash, 0, 11, "Signals W / L", text_color = color.white, text_size = size.small, text_halign = text.align_left)
     table.cell(dash, 1, 11, str.tostring(wins) + " / " + str.tostring(losses) + (consecLoss > 0 ? "  (" + str.tostring(consecLoss) + " in a row)" : ""), text_color = color.white, text_size = size.small)
-    table.cell(dash, 0, 12, "Size at " + str.tostring(riskPct, "#.##") + "% risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * riskPct / 100, "#") + ")", text_color = color.white, text_size = size.small)
-    table.cell(dash, 0, 13, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
-    table.cell(dash, 1, 13, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 0, 12, "Size at " + str.tostring(f_riskPct(dirC), "#.##") + "% risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 12, na(planSize) ? "n/a" : str.tostring(planSize, "#.####") + " (risk " + str.tostring(acct * f_riskPct(dirC) / 100, "#") + ")", text_color = color.white, text_size = size.small)
+    string grade = dirC != 0 ? f_grade(dirC) : "-"
+    table.cell(dash, 0, 13, "Range stack W/D/4H/1H", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 13, f_letter(dirHi, dirLo) + " " + f_letter(syncHi, syncLo) + " " + f_letter(ctxHi, ctxLo) + " " + f_letter(setupHi, setupLo) + "  grade " + grade, text_color = grade == "A+" or grade == "A" ? colBull : colLiq, text_size = size.small)
+    table.cell(dash, 0, 14, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 14, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")
@@ -1056,4 +1130,5 @@ alertcondition(bullBrk and bullMSS, "TM bullish MSS", "Bullish market structure 
 alertcondition(bearBrk and bearMSS, "TM bearish MSS", "Bearish market structure shift on {{ticker}} ({{interval}})")
 alertcondition(sweepBull, "TM sell-side sweep", "Sell-side liquidity swept on {{ticker}} ({{interval}})")
 alertcondition(sweepBear, "TM buy-side sweep", "Buy-side liquidity swept on {{ticker}} ({{interval}})")
+alertcondition(inNews and not inNews[1], "TM news window starting", "News window starting on {{ticker}}: no new entries, manage open trades")
 alertcondition(judasBull or judasBear, "TM Judas swing", "Asian range Judas swing on {{ticker}} ({{interval}})")

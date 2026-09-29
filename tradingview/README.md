@@ -3,7 +3,7 @@
 `trader-mayne-framework.pine` implements the trading framework from Trader Mayne's
 [Whiteboard Series](https://www.youtube.com/playlist?list=PLKItFyoma4GeQSNjY7LM5qtEgTFUidxYI).
 
-**Status: v1.6, built from episodes 1-17 of 24. It has not been compiled or tested in TradingView yet.**
+**Status: v1.7, built from episodes 1-19 of 24. It has not been compiled or tested in TradingView yet.**
 Paste it into the Pine Editor, fix any compile message it reports, and check it against charts before relying on it.
 
 ## Install
@@ -30,6 +30,8 @@ Paste it into the Pine Editor, fix any compile message it reports, and check it 
 | 15 | Seven disqualifiers: no HTF bias, wrong zone, no target or under 2R, incomplete model, chasing, news, emotion | No-trade filters and a dashboard row naming the first disqualifier. See below. |
 | 16 | Stop = invalidation, hard stop that never widens, position size from the stop, TP from internal / external liquidity, partials in 25% or 1/3, 2:1 minimum, break-even win-rate math | Risk and exits inputs, position size on every signal, 2R and partial levels. See below. |
 | 17 | Scaling in: split the same risk, never add risk. Scale within a zone, or add only on new confirmed models. No averaging down. | *Entry scaling* setting. See below. |
+| 18 | News is the driver, liquidity is the destination. Know the calendar, no new entries before news, manage what you have, let the candle close, trade the aftermath. | News window, `NEWS` sweep tags, news-start alert. See below. |
+| 19 | Nested ranges, range resets only on displacement, stacking premium / discount across timeframes for A+ setups | Range stack row, A+ / A / B grade, displacement-only resets. See below. |
 | 10 | PO3 / AMD, Judas swing, Asia range, daily / weekly open, Monday range | Asian range box, Judas markers (Asia sweep plus reclaim), daily / weekly open, Monday high / low. |
 
 ## Setup logic
@@ -83,17 +85,28 @@ No zone tag, no displacement, or under 2R means no signal. The dashboard shows w
 - **Add on confirmation:** the first entry is a fraction of full size (default 50%). Each later add (default two, 25% each) fires only when a **new, separate model** forms (structure break, displacement, new FVG, retest) in the same direction. The stop can move up to each new model's swing low (never down), and the labels are tagged `ADD1`, `ADD2`. No adds fire after the campaign stop has been hit, which is how the indicator keeps you out of averaging down.
 - His combined ladder (half at the top of a daily zone, the rest on lower-timeframe models) can be approximated by using *Add on confirmation* on a lower-timeframe chart. The half-at-the-zone-touch entry is not automated.
 
+**News (episode 18).** News is treated as a fast liquidity sweep, not a signal.
+- The news window from episode 15 (default 60 minutes before, 120 after, up to three events entered by hand) blocks new signals, which covers "no new entries before news" and "let the candle close". Once it ends, the normal top-down model applies again, which is "trade the aftermath".
+- Sweeps that happen inside the window are tagged `NEWS`, so you can see the news spike took a liquidity level while the higher-timeframe bias stayed intact.
+- An alert fires when a news window starts, as a prompt to manage open trades (hold, flatten or take a partial; never widen the stop).
+- The calendar itself is manual. He uses forexfactory.com (red = high impact), the CME FedWatch probabilities and Yahoo Finance earnings.
+
+**Nested ranges and stacking (episode 19).**
+- The dashboard's *Range stack* row shows where price sits in the weekly, daily, H4 and H1 ranges (`D` = discount, `P` = premium). A long wants `D` everywhere, a short wants `P` everywhere.
+- Setups are graded **A+** (every range on the right side), **A** (all but one) or **B**. The grade is on each signal label. *Require at least N ranges* can make stacking a filter. *Grade setups... risk more on A+* (off by default) lifts the risk from your normal % to the A+ % (default 2%), as he describes.
+- The chart dealing range now resets only on **expansion with displacement**. A sweep, SFP or deviation beyond the range leaves it unchanged. After a displacement reset, the old range high / low stays on the chart as a level of interest (support / resistance flip). The higher-timeframe ranges use the plain swing rule and do not have this displacement check yet.
+
 Set *Entry model* to "OB / breaker / FVG (general)" for the score-filtered order block, breaker and FVG logic from episodes 6-9 instead.
 Shorts are the mirror image. Optional gates: kill zone, recent liquidity sweep, allow counter-bias.
 
 The 1-hour step is a "wait" step, so it has no separate setting. The context POI tag is the equivalent.
 
-## Not yet implemented (episodes 18-25, not read yet)
+## Not yet implemented (episodes 20-25, not read yet)
 
-Episodes 18-25 are:
-news trading, advanced dealing ranges, kill zones, SMT divergence,
+Episodes 20-25 are:
+kill zones, SMT divergence,
 liquidity trap and learning liquidity, best-trade breakdown, and trading psychology.
-YouTube rate-limited transcript downloads after episode 11. Episodes 12-17 were supplied by hand. Episodes 18-25 are **not** in the script yet.
+YouTube rate-limited transcript downloads after episode 11. Episodes 12-19 were supplied by hand. Episodes 20-25 are **not** in the script yet.
 The kill-zone times (Asia 20:00-00:00, London 02:00-05:00, NY 07:00-10:00 New York time) are common ICT defaults,
 not confirmed from his kill-zone episode.
 
