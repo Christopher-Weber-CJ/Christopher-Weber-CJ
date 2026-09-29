@@ -1,7 +1,8 @@
 //@version=6
 // Trader Mayne "Whiteboard Series" framework.
-// Built from episodes 1-11: glossary, market structure, liquidity, dealing ranges, HTF bias,
-// fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows.
+// Built from episodes 1-12: glossary, market structure, liquidity, dealing ranges, HTF bias,
+// fair value gaps, order blocks / breakers, OB vs FVG, OTE, AMD / Judas swing, equal highs/lows,
+// and the four-step top-down process (direction -> context -> setup -> entry).
 // Entry-model, killzone-timing, SMT, risk-management and scaling episodes are not implemented yet.
 indicator("Trader Mayne Framework", shorttitle = "TM Framework", overlay = true,
      max_bars_back = 500, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
@@ -14,12 +15,16 @@ atrLen     = input.int(14, "ATR length", minval = 1, group = G_STR)
 dispMult   = input.float(1.2, "Displacement: candle body ≥ ATR ×", minval = 0.1, step = 0.1, group = G_STR)
 showStruct = input.bool(true, "Show MSB / MSS", group = G_STR)
 
-G_HTF = "Higher-timeframe bias"
-useHTF       = input.bool(true, "Use higher-timeframe bias", group = G_HTF)
-htf          = input.timeframe("D", "Bias timeframe (must be above chart timeframe)", group = G_HTF)
+G_HTF = "Top-down process (episode 12)"
+useHTF       = input.bool(true, "Use top-down bias", group = G_HTF)
+dirTF        = input.timeframe("W", "Step 1a - direction timeframe (weekly)", group = G_HTF)
+syncTF       = input.timeframe("D", "Step 1b - sync timeframe (daily)", group = G_HTF)
+ctxTF        = input.timeframe("240", "Step 2 - context timeframe (H4): points of interest", group = G_HTF)
 htfMajor     = input.int(5, "HTF major swing length", minval = 2, maxval = 30, group = G_HTF)
-pdSource     = input.string("HTF range", "Premium / discount source", options = ["HTF range", "Chart range"], group = G_HTF)
-showHTFRange = input.bool(true, "Plot HTF dealing range", group = G_HTF)
+reqSyncTF    = input.bool(true, "Sync timeframe must agree with direction timeframe (else wait)", group = G_HTF)
+reqPOI       = input.bool(true, "Require the entry zone to sit inside a context-timeframe POI", group = G_HTF)
+pdSource     = input.string("Sync TF range", "Premium / discount source", options = ["Sync TF range", "Direction TF range", "Chart range"], group = G_HTF)
+showHTFRange = input.bool(true, "Plot higher-timeframe ranges and context POIs", group = G_HTF)
 
 G_RNG = "Dealing range / OTE"
 showRange = input.bool(true, "Show chart dealing range (high, low, EQ)", group = G_RNG)
@@ -63,7 +68,7 @@ G_ENT = "Entry model"
 enableSig   = input.bool(true, "Enable setup signals", group = G_ENT)
 minScoreEnt = input.int(3, "Minimum zone score to trade", minval = 0, maxval = 7, group = G_ENT)
 entryMode   = input.string("Zone edge", "Entry at", options = ["Zone edge", "50% mean", "Bar close"], group = G_ENT)
-stopMode    = input.string("Zone extreme", "Stop beyond", options = ["Zone edge", "Zone extreme"], tooltip = "Zone extreme = the sweep / leg extreme behind the zone (safer). Zone edge = tightest stop, best RR.", group = G_ENT)
+stopMode    = input.string("Context POI", "Stop beyond", options = ["Zone edge", "Zone extreme", "Context POI"], tooltip = "Context POI = beyond the context-timeframe POI the setup formed in (his method: the idea is wrong there, and targets come from the higher timeframes). Zone extreme = the sweep / leg extreme behind the zone. Zone edge = tightest stop.", group = G_ENT)
 slBuf       = input.float(0.1, "Stop buffer (ATR ×)", minval = 0.0, step = 0.05, group = G_ENT)
 minRR       = input.float(2.0, "Minimum reward : risk", minval = 0.5, step = 0.25, group = G_ENT)
 allowCtr    = input.bool(false, "Allow trades against HTF bias", group = G_ENT)
@@ -121,7 +126,56 @@ f_htf(float h, float l, float c, int majLen) =>
         mLo := mpl
     [tr, mHi, mLo]
 
-[htfTrend, htfHi, htfLo] = request.security(syminfo.tickerid, htf, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+// Latest live points of interest on the context timeframe: order block (last opposite candle
+// before a structure break) or fair value gap, until price closes through it.
+f_ctx(float o, float h, float l, float c) =>
+    float sph = (h[1] > h[2] and h[1] > h[0]) ? h[1] : na
+    float spl = (l[1] < l[2] and l[1] < l[0]) ? l[1] : na
+    var float sh = na
+    var float sl = na
+    var bool shDone = true
+    var bool slDone = true
+    var float bT = na
+    var float bB = na
+    var float sT = na
+    var float sB = na
+    if not na(sph)
+        sh := sph
+        shDone := false
+    if not na(spl)
+        sl := spl
+        slDone := false
+    if not shDone and c > sh
+        shDone := true
+        for i = 1 to 10
+            if c[i] < o[i]
+                bT := h[i]
+                bB := l[i]
+                break
+    if not slDone and c < sl
+        slDone := true
+        for i = 1 to 10
+            if c[i] > o[i]
+                sT := h[i]
+                sB := l[i]
+                break
+    if l > h[2] and c[1] > o[1]
+        bT := l
+        bB := h[2]
+    if h < l[2] and c[1] < o[1]
+        sT := l[2]
+        sB := h
+    if not na(bB) and c < bB
+        bT := na
+        bB := na
+    if not na(sT) and c > sT
+        sT := na
+        sB := na
+    [bT, bB, sT, sB]
+
+[dirTrend, dirHi, dirLo]     = request.security(syminfo.tickerid, dirTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+[syncTrend, syncHi, syncLo]  = request.security(syminfo.tickerid, syncTF, f_htf(high[1], low[1], close[1], htfMajor), lookahead = barmerge.lookahead_off)
+[ctxBullTop, ctxBullBot, ctxBearTop, ctxBearBot] = request.security(syminfo.tickerid, ctxTF, f_ctx(open[1], high[1], low[1], close[1]), lookahead = barmerge.lookahead_off)
 
 // ───────────────────────────── Core series ─────────────────────────────
 atr = ta.atr(atrLen)
@@ -197,17 +251,16 @@ if not na(mpl)
     rangeChanged := true
 
 bool chartRangeOK = not na(rHi) and not na(rLo) and rHi > rLo
-bool htfRangeOK   = useHTF and not na(htfHi) and not na(htfLo) and htfHi > htfLo
-bool useHtfPD     = pdSource == "HTF range" and htfRangeOK
-float pdHi  = useHtfPD ? htfHi : (chartRangeOK ? rHi : na)
-float pdLo  = useHtfPD ? htfLo : (chartRangeOK ? rLo : na)
+bool dirRangeOK  = useHTF and not na(dirHi) and not na(dirLo) and dirHi > dirLo
+bool syncRangeOK = useHTF and not na(syncHi) and not na(syncLo) and syncHi > syncLo
+float pdHi  = pdSource == "Sync TF range" and syncRangeOK ? syncHi : pdSource == "Direction TF range" and dirRangeOK ? dirHi : (chartRangeOK ? rHi : na)
+float pdLo  = pdSource == "Sync TF range" and syncRangeOK ? syncLo : pdSource == "Direction TF range" and dirRangeOK ? dirLo : (chartRangeOK ? rLo : na)
 float pdMid = (pdHi + pdLo) / 2
 
-// External range liquidity = the far end of the dealing range (HTF first, chart as fallback).
-float tgtHi = (htfRangeOK and htfHi > close) ? htfHi : (chartRangeOK ? rHi : na)
-float tgtLo = (htfRangeOK and htfLo < close) ? htfLo : (chartRangeOK ? rLo : na)
-
-int biasDir = useHTF ? htfTrend : trend
+// Step 1: weekly gives direction; the daily must have synced back with it, otherwise wait.
+int biasDir = useHTF ? (reqSyncTF ? (dirTrend == syncTrend ? dirTrend : 0) : dirTrend) : trend
+float lo20 = ta.lowest(low, 20)
+float hi20 = ta.highest(high, 20)
 
 var line rngHi = na
 var line rngLo = na
@@ -241,9 +294,17 @@ if showRange and rangeChanged and chartRangeOK
         bxOte := box.new(x0, math.max(o1, o2), bar_index, math.min(o1, o2), border_color = color.new(colMSS, 50), bgcolor = color.new(colMSS, 88), extend = extend.right, text = "OTE", text_size = size.tiny, text_color = color.new(colMSS, 20), text_halign = text.align_right)
         rngSweet := line.new(x0, sp, bar_index, sp, extend = extend.right, color = color.new(colMSS, 40), style = line.style_dotted)
 
-plot(showHTFRange and htfRangeOK ? htfHi : na, "HTF range high", color = color.new(colBear, 50), style = plot.style_linebr)
-plot(showHTFRange and htfRangeOK ? htfLo : na, "HTF range low", color = color.new(colBull, 50), style = plot.style_linebr)
-plot(showHTFRange and htfRangeOK ? (htfHi + htfLo) / 2 : na, "HTF equilibrium", color = color.new(colLiq, 50), style = plot.style_linebr)
+plot(showHTFRange and syncRangeOK ? syncHi : na, "Sync TF range high", color = color.new(colBear, 50), style = plot.style_linebr)
+plot(showHTFRange and syncRangeOK ? syncLo : na, "Sync TF range low", color = color.new(colBull, 50), style = plot.style_linebr)
+plot(showHTFRange and syncRangeOK ? (syncHi + syncLo) / 2 : na, "Sync TF equilibrium", color = color.new(colLiq, 50), style = plot.style_linebr)
+plot(showHTFRange and dirRangeOK ? dirHi : na, "Direction TF range high", color = color.new(colBear, 75), style = plot.style_linebr)
+plot(showHTFRange and dirRangeOK ? dirLo : na, "Direction TF range low", color = color.new(colBull, 75), style = plot.style_linebr)
+pBullTop = plot(showHTFRange ? ctxBullTop : na, "Context bullish POI top", color = color.new(colBull, 70), style = plot.style_linebr)
+pBullBot = plot(showHTFRange ? ctxBullBot : na, "Context bullish POI bottom", color = color.new(colBull, 70), style = plot.style_linebr)
+fill(pBullTop, pBullBot, color = color.new(colBull, 88), title = "Context bullish POI")
+pBearTop = plot(showHTFRange ? ctxBearTop : na, "Context bearish POI top", color = color.new(colBear, 70), style = plot.style_linebr)
+pBearBot = plot(showHTFRange ? ctxBearBot : na, "Context bearish POI bottom", color = color.new(colBear, 70), style = plot.style_linebr)
+fill(pBearTop, pBearBot, color = color.new(colBear, 88), title = "Context bearish POI")
 
 // ───────────────────────────── Sessions ─────────────────────────────
 bool isIntra = timeframe.isintraday
@@ -321,6 +382,15 @@ type Zone
     box   bx
     line  mid
 
+type Liq
+    float px
+    int   side     // 1 = buy-side (above highs), -1 = sell-side (below lows)
+    int   bar
+    line  ln
+    bool  eq
+    int   brk
+
+var array<Liq> liqs = array.new<Liq>()
 var array<Zone> zones = array.new<Zone>()
 var array<Zone> pend  = array.new<Zone>()
 var array<box>   tBoxes  = array.new<box>()
@@ -423,15 +493,40 @@ f_createOB(int dir, int anchorBar) =>
         f_addZone(zTop, zBot, dir, 0, score, bar_index - cEnd, ext, overlap)
     true
 
+// External range liquidity, nearest first: equal highs / lows, then the sync-timeframe range,
+// direction-timeframe range and chart range. Prefers the nearest target that pays at least minRR.
+f_pickTarget(int dir, float entry, float risk) =>
+    float pick = na
+    float far = na
+    array<float> cand = array.new_float()
+    array.push(cand, dir == 1 ? syncHi : syncLo)
+    array.push(cand, dir == 1 ? dirHi : dirLo)
+    array.push(cand, dir == 1 ? rHi : rLo)
+    if array.size(liqs) > 0
+        for k = 0 to array.size(liqs) - 1
+            Liq q = array.get(liqs, k)
+            if q.eq and q.side == dir
+                array.push(cand, q.px)
+    for k = 0 to array.size(cand) - 1
+        float t = array.get(cand, k)
+        if not na(t) and (dir == 1 ? t > entry : t < entry)
+            if na(far) or math.abs(t - entry) > math.abs(far - entry)
+                far := t
+            if math.abs(t - entry) / risk >= minRR and (na(pick) or math.abs(t - entry) < math.abs(pick - entry))
+                pick := t
+    na(pick) ? far : pick
+
 // Entry, stop, target and reward:risk for a zone.
 f_plan(Zone z) =>
     float mid = (z.top + z.bot) / 2
     float entry = entryMode == "Zone edge" ? (z.dir == 1 ? z.top : z.bot) : entryMode == "50% mean" ? mid : close
     float buf = slBuf * atr
-    float sl = z.dir == 1 ? (stopMode == "Zone extreme" ? math.min(z.ext, z.bot) : z.bot) - buf : (stopMode == "Zone extreme" ? math.max(z.ext, z.top) : z.top) + buf
-    float tp = z.dir == 1 ? ((not na(tgtHi) and tgtHi > entry) ? tgtHi : na) : ((not na(tgtLo) and tgtLo < entry) ? tgtLo : na)
-    bool valid = not na(tp) and (z.dir == 1 ? entry > sl : entry < sl)
-    float rr = valid ? math.abs(tp - entry) / math.abs(entry - sl) : na
+    float ctxLong = not na(ctxBullBot) ? math.min(ctxBullBot, z.bot) : math.min(z.ext, z.bot)
+    float ctxShort = not na(ctxBearTop) ? math.max(ctxBearTop, z.top) : math.max(z.ext, z.top)
+    float sl = z.dir == 1 ? (stopMode == "Context POI" ? ctxLong : stopMode == "Zone extreme" ? math.min(z.ext, z.bot) : z.bot) - buf : (stopMode == "Context POI" ? ctxShort : stopMode == "Zone extreme" ? math.max(z.ext, z.top) : z.top) + buf
+    bool okRisk = z.dir == 1 ? entry > sl : entry < sl
+    float tp = okRisk ? f_pickTarget(z.dir, entry, math.abs(entry - sl)) : na
+    float rr = na(tp) ? na : math.abs(tp - entry) / math.abs(entry - sl)
     [entry, sl, tp, rr]
 
 f_drawTrade(int dir, float en, float sl, float tp, float rr, int score) =>
@@ -447,15 +542,6 @@ f_drawTrade(int dir, float en, float sl, float tp, float rr, int score) =>
     true
 
 // ───────────────────────────── Liquidity ─────────────────────────────
-type Liq
-    float px
-    int   side     // 1 = buy-side (above highs), -1 = sell-side (below lows)
-    int   bar
-    line  ln
-    bool  eq
-    int   brk
-
-var array<Liq> liqs = array.new<Liq>()
 var int lastSslSweep = na
 var int lastBslSweep = na
 bool sweepBull = false
@@ -600,12 +686,14 @@ if nZ > 0
             if z.dir == 1 and (allowCtr or biasDir == 1) and (not reqSync or trend == 1)
                 bool touched = low <= trig and close >= mid
                 bool locOK = not reqPD or (not na(pdMid) and mid < pdMid)
-                if touched and locOK and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
+                bool poiOK = not reqPOI or (not na(ctxBullTop) and z.bot <= ctxBullTop and z.top >= ctxBullBot)
+                if touched and locOK and poiOK and kzOK and sweepOKL and (na(bestL) or z.score > bestL.score)
                     bestL := z
             if z.dir == -1 and (allowCtr or biasDir == -1) and (not reqSync or trend == -1)
                 bool touched = high >= trig and close <= mid
                 bool locOK = not reqPD or (not na(pdMid) and mid > pdMid)
-                if touched and locOK and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
+                bool poiOK = not reqPOI or (not na(ctxBearTop) and z.top >= ctxBearBot and z.bot <= ctxBearTop)
+                if touched and locOK and poiOK and kzOK and sweepOKS and (na(bestS) or z.score > bestS.score)
                     bestS := z
 
 if array.size(pend) > 0
@@ -651,46 +739,49 @@ f_tick(bool ok) => ok ? "✓" : "✗"
 
 if showDash and barstate.islast
     int dirC = biasDir
-    string dirTxt = dirC == 1 ? "Bullish" : dirC == -1 ? "Bearish" : "Undefined"
+    string dirTxt = dirC == 1 ? "Bullish" : dirC == -1 ? "Bearish" : "Wait"
     color dirCol = dirC == 1 ? colBull : dirC == -1 ? colBear : colLiq
+    string syncTxt = not useHTF ? "off" : dirTrend == 0 ? "No bias" : dirTrend == syncTrend ? "Synced" : "Counter - wait"
+    bool syncTFOK = not useHTF or (dirTrend != 0 and dirTrend == syncTrend)
     bool locOKd = not na(pdMid) and ((dirC == 1 and close < pdMid) or (dirC == -1 and close > pdMid))
     string locTxt = na(pdMid) ? "n/a" : close < pdMid ? "Discount" : close > pdMid ? "Premium" : "Equilibrium"
-    bool tgtOK = dirC == 1 ? not na(tgtHi) : dirC == -1 ? not na(tgtLo) : false
-    bool liqOK = tgtOK and (dirC == 1 ? recentSsl : dirC == -1 ? recentBsl : false)
+    bool poiExists = dirC == 1 ? not na(ctxBullTop) : dirC == -1 ? not na(ctxBearTop) : false
+    bool poiTagged = dirC == 1 ? (poiExists and lo20 <= ctxBullTop) : dirC == -1 ? (poiExists and hi20 >= ctxBearBot) : false
     Zone bz = na
     if dirC != 0 and array.size(zones) > 0
         for k = 0 to array.size(zones) - 1
             Zone zz = array.get(zones, k)
             if zz.dir == dirC and zz.score >= minScoreEnt and (zz.kind < 2 or fvgEntries) and (na(bz) or zz.score > bz.score)
                 bz := zz
-    bool syncOK = dirC != 0 and trend == dirC
-    bool modelOK = not na(bz) and syncOK
+    bool modelOK = not na(bz) and trend == dirC
     float planRR = na
     if not na(bz)
         [pe, ps, pt, pr] = f_plan(bz)
         planRR := pr
     bool rrOK = not na(planRR) and planRR >= minRR
-    string sess = inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "—"
+    string sess = inLon ? "London KZ" : inNY ? "New York KZ" : inAsia ? "Asia" : "-"
 
-    table.cell(dash, 0, 0, "Mayne checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
+    table.cell(dash, 0, 0, "Top-down checklist", text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
     table.cell(dash, 1, 0, syminfo.ticker, text_color = color.white, text_size = size.small, bgcolor = color.new(colLiq, 60))
-    table.cell(dash, 0, 1, useHTF ? "1 HTF bias (" + htf + ")" : "1 Chart bias", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 1, dirTxt + " " + f_tick(dirC != 0), text_color = dirCol, text_size = size.small)
-    table.cell(dash, 0, 2, "2 Range location", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 2, locTxt + " " + f_tick(locOKd), text_color = locOKd ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 3, "3 Liquidity / target", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 3, (tgtOK ? "Target set" : "No target") + (liqOK ? " + sweep " : " ") + f_tick(tgtOK), text_color = tgtOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 4, "4 Entry model", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 4, (na(bz) ? "No POI" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 5, "5 Reward : risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 5, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
-    table.cell(dash, 0, 6, "Chart structure", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 6, trend == 1 ? "Bullish" : trend == -1 ? "Bearish" : "—", text_color = trend == 1 ? colBull : trend == -1 ? colBear : colLiq, text_size = size.small)
-    table.cell(dash, 0, 7, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(dash, 1, 7, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
-    bool all5 = dirC != 0 and locOKd and tgtOK and modelOK and rrOK
-    table.cell(dash, 0, 8, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(all5 ? colBull : colBear, 70))
-    table.cell(dash, 1, 8, all5 ? "All boxes ticked" : "Wait", text_color = all5 ? colBull : colBear, text_size = size.small, bgcolor = color.new(all5 ? colBull : colBear, 70))
+    table.cell(dash, 0, 1, "1a Direction (" + dirTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 1, (dirTrend == 1 ? "Bullish" : dirTrend == -1 ? "Bearish" : "Range") + " " + f_tick(dirTrend != 0), text_color = dirTrend == 1 ? colBull : dirTrend == -1 ? colBear : colLiq, text_size = size.small)
+    table.cell(dash, 0, 2, "1b Sync (" + syncTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 2, syncTxt + " " + f_tick(syncTFOK), text_color = syncTFOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 3, "2 Location in range", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 3, locTxt + " " + f_tick(locOKd), text_color = locOKd ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 4, "2 Context POI (" + ctxTF + ")", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 4, (poiExists ? "Marked" : "None") + " " + f_tick(poiExists), text_color = poiExists ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 5, "3 Price tagged POI", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 5, (poiTagged ? "Yes" : "Waiting") + " " + f_tick(poiTagged), text_color = poiTagged ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 6, "4 Chart MSB + zone", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 6, (na(bz) ? "No zone" : (bz.kind == 0 ? "OB " : bz.kind == 1 ? "Breaker " : "FVG ") + str.tostring(bz.score)) + " " + f_tick(modelOK), text_color = modelOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 7, "Reward : risk", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 7, (na(planRR) ? "n/a" : str.tostring(planRR, "#.0") + "R") + " " + f_tick(rrOK), text_color = rrOK ? colBull : colBear, text_size = size.small)
+    table.cell(dash, 0, 8, "Session", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(dash, 1, 8, sess, text_color = inKZ ? colNY : colLiq, text_size = size.small)
+    bool allOK = dirC != 0 and syncTFOK and locOKd and poiExists and poiTagged and modelOK and rrOK
+    table.cell(dash, 0, 9, "Take the trade?", text_color = color.white, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(allOK ? colBull : colBear, 70))
+    table.cell(dash, 1, 9, allOK ? "All boxes ticked" : "Wait", text_color = allOK ? colBull : colBear, text_size = size.small, bgcolor = color.new(allOK ? colBull : colBear, 70))
 
 // ───────────────────────────── Alerts ─────────────────────────────
 alertcondition(longSig, "TM long setup", "Trader Mayne framework: long setup on {{ticker}} ({{interval}})")
