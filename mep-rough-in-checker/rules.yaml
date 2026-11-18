@@ -1,0 +1,96 @@
+# MEP rough-in rules for a residential unit in Saskatchewan.
+# Saskatchewan adopts the Canadian Electrical Code Part I (via The Electrical Inspection Act) and the
+# National Building Code and National Plumbing Code of Canada 2020 (via The Construction Codes Act).
+# Clause numbers below are given to the best of the author's knowledge: confirm them, and the numeric
+# limits, against the editions in force on your permit date before relying on any result.
+# `check: null` means the tool has no test for the rule; it is always reported NOT CHECKED.
+rules:
+  - id: E1
+    title: Receptacle spacing along usable walls
+    check: receptacle_spacing
+    params: {max_distance_m: 1.8, room_types: [living, bedroom, kitchen, dining, family]}
+    source: >-
+      Canadian Electrical Code Part I, Rule 26-712(a): receptacles placed so that no point along the floor
+      line of any usable wall space is more than 1.8 m horizontally from a receptacle. Doorways and open
+      sides of a room (no wall) are not usable wall space.
+  - id: E2
+    title: GFCI protection for receptacles near sinks and tubs
+    check: gfci
+    params: {max_distance_m: 1.5, fixture_types: [sink, lav, tub, shower]}
+    source: >-
+      Canadian Electrical Code Part I, Rule 26-700(11): receptacles within 1.5 m of a sink, bathtub or
+      shower stall must be protected by a Class A ground fault circuit interrupter.
+  - id: E3
+    title: AFCI protection of 120 V receptacle circuits
+    check: afci
+    params: {volts: 120}
+    source: >-
+      Canadian Electrical Code Part I, Rule 26-658: branch circuits supplying 125 V receptacles rated
+      20 A or less in a dwelling unit must have arc-fault (AFCI) protection.
+  - id: E4
+    title: Dedicated circuits (range, dryer, washer, dishwasher, bathroom)
+    check: dedicated_circuits
+    params: {appliance_types: [range, dryer, washer, dishwasher], room_types: [bathroom]}
+    source: >-
+      Canadian Electrical Code Part I, Section 26 dwelling-unit rules (Rules 26-720 to 26-746): the range,
+      clothes dryer, laundry (washer) receptacle and dishwasher each on their own branch circuit. Bathroom
+      receptacles on a circuit serving only the bathroom is a requirement of this project brief; confirm
+      the exact CEC wording that applies.
+  - id: E5
+    title: Kitchen counter receptacles (900 mm rule, split circuits)
+    check: null
+    reason: Counter tops are not part of the plan schema, so counter spacing cannot be tested.
+    source: >-
+      Canadian Electrical Code Part I, Rule 26-712(d): counter receptacles so that no point along the
+      counter wall line is more than 900 mm from a receptacle.
+  - id: F1
+    title: Smoke alarms in each bedroom and in the hallway serving bedrooms
+    check: smoke_alarms
+    params: {}
+    source: >-
+      National Building Code of Canada 2020 (as adopted in Saskatchewan), Article 9.10.19.3: a smoke alarm
+      in each sleeping room, and between sleeping rooms and the rest of the storey, in the hallway where
+      the sleeping rooms are served by a hallway.
+  - id: F2
+    title: Carbon monoxide alarms where there is a fuel-burning appliance
+    check: co_alarms
+    params: {max_distance_m: 5.0, fuel_free: [electric]}
+    source: >-
+      National Building Code of Canada 2020 (as adopted in Saskatchewan), Article 9.32.3.9: where a
+      dwelling unit has a fuel-burning appliance, a CO alarm inside each bedroom or outside each bedroom
+      within 5 m of the bedroom door.
+  - id: P1
+    title: Trap arm length per fixture
+    check: trap_arm
+    params:
+      max_length_m: {1.25: 1.5, 1.5: 1.8, 2.0: 2.4, 3.0: 3.6}
+    source: >-
+      National Plumbing Code of Canada 2020 (as adopted in Saskatchewan), Article 2.5.6.3 and its table:
+      maximum length of a trap arm (trap weir to vent) by trap size, e.g. 1-1/2 in trap 1.8 m.
+  - id: P2
+    title: Vent present for every trapped fixture
+    check: vent_present
+    params: {}
+    source: >-
+      National Plumbing Code of Canada 2020 (as adopted in Saskatchewan), Section 2.5: every fixture trap
+      must be protected by a vent (individual, wet, stack or other permitted vent).
+  - id: P3
+    title: Minimum slope of horizontal drains
+    check: null
+    params: {design_slope: 0.02}
+    reason: >-
+      Every drain is drawn at 2 % (1/4 in per ft) and the drop is reported, but floor framing depth is not
+      modelled, so whether that slope fits is not verified.
+    source: >-
+      National Plumbing Code of Canada 2020, Article 2.4.8.1: horizontal drains 3 in and smaller at no
+      less than 1 in 50 (2 %).
+  - id: X1
+    title: Electrical load calculation
+    check: null
+    reason: Out of scope for this prototype. No service or panel load calculation is done.
+    source: Canadian Electrical Code Part I, Rule 8-200 (single dwellings) and Rule 8-202 (apartments).
+  - id: X2
+    title: Conductor, breaker and pipe sizing
+    check: null
+    reason: Out of scope. No wire, overcurrent device, PEX, drain or vent sizing is done.
+    source: Canadian Electrical Code Part I, Section 4 and Table 2; National Plumbing Code of Canada 2020, Sections 2.4 to 2.6.

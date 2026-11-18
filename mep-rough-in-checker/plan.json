@@ -1,0 +1,59 @@
+{
+  "name": "Unit 204 - two-bedroom apartment (sample)",
+  "units": "ft",
+  "note": "Origin at top-left (north-west) corner, x to the east, y to the south. Polygons and walls in feet.",
+  "rooms": [
+    {"id": "living",  "name": "Living",       "type": "living",   "polygon": [[0,0],[16,0],[16,13],[0,13]]},
+    {"id": "kitchen", "name": "Kitchen",      "type": "kitchen",  "polygon": [[16,0],[30,0],[30,17],[26,17],[26,13],[16,13]]},
+    {"id": "hall",    "name": "Hall",         "type": "hall",     "polygon": [[11,13],[19,13],[19,21],[17,21],[17,17],[11,17]]},
+    {"id": "laundry", "name": "Laundry",      "type": "laundry",  "polygon": [[19,13],[23,13],[23,17],[19,17]]},
+    {"id": "mech",    "name": "Mech",         "type": "mechanical","polygon": [[23,13],[26,13],[26,17],[23,17]]},
+    {"id": "bath",    "name": "Bathroom",     "type": "bathroom", "polygon": [[11,17],[17,17],[17,25],[11,25]]},
+    {"id": "bed1",    "name": "Bedroom 1",    "type": "bedroom",  "polygon": [[0,13],[11,13],[11,25],[17,25],[17,21],[19,21],[19,30],[0,30]]},
+    {"id": "bed2",    "name": "Bedroom 2",    "type": "bedroom",  "polygon": [[19,17],[30,17],[30,30],[19,30]]}
+  ],
+  "walls": [
+    {"id": "N",  "a": [0,0],   "b": [30,0],  "exterior": true},
+    {"id": "E",  "a": [30,0],  "b": [30,30], "exterior": true},
+    {"id": "S",  "a": [30,30], "b": [0,30],  "exterior": true},
+    {"id": "W",  "a": [0,30],  "b": [0,0],   "exterior": true},
+    {"id": "i1", "a": [0,13],  "b": [11,13]},
+    {"id": "i2", "a": [11,13], "b": [11,25]},
+    {"id": "i3", "a": [11,17], "b": [17,17]},
+    {"id": "i4", "a": [17,17], "b": [17,25]},
+    {"id": "i5", "a": [11,25], "b": [17,25]},
+    {"id": "i6", "a": [17,21], "b": [19,21]},
+    {"id": "i7", "a": [19,13], "b": [19,30]},
+    {"id": "i8", "a": [19,13], "b": [26,13]},
+    {"id": "i9", "a": [23,13], "b": [23,17]},
+    {"id": "i10","a": [26,13], "b": [26,17]},
+    {"id": "i11","a": [19,17], "b": [30,17]}
+  ],
+  "openings": [
+    {"id": "entry",    "type": "door",   "a": [1.5,0],   "b": [4.5,0],   "rooms": ["living", "exterior"]},
+    {"id": "d-bed1",   "type": "door",   "a": [11,13.75],"b": [11,16.25],"rooms": ["bed1", "hall"]},
+    {"id": "d-bath",   "type": "door",   "a": [12,17],   "b": [14.5,17], "rooms": ["bath", "hall"]},
+    {"id": "d-bed2",   "type": "door",   "a": [19,17.75],"b": [19,20.25],"rooms": ["bed2", "hall"]},
+    {"id": "d-laundry","type": "door",   "a": [19,13.5], "b": [19,16.5], "rooms": ["laundry", "hall"]},
+    {"id": "d-mech",   "type": "door",   "a": [23.25,13],"b": [25.75,13],"rooms": ["mech", "kitchen"]},
+    {"id": "w-living", "type": "window", "a": [7,0],     "b": [13,0]},
+    {"id": "w-kitchen","type": "window", "a": [22.5,0],  "b": [25.5,0]},
+    {"id": "w-bed1",   "type": "window", "a": [0,19],    "b": [0,24]},
+    {"id": "w-bed2",   "type": "window", "a": [22,30],   "b": [27,30]}
+  ],
+  "fixtures": [
+    {"id": "k-sink",   "type": "sink",         "room": "kitchen", "at": [24.0, 0.5]},
+    {"id": "dw",       "type": "dishwasher",   "room": "kitchen", "at": [26.5, 0.5]},
+    {"id": "range",    "type": "range",        "room": "kitchen", "at": [19.5, 0.5]},
+    {"id": "lav",      "type": "lav",          "room": "bath",    "at": [16.5, 18.5]},
+    {"id": "wc",       "type": "toilet",       "room": "bath",    "at": [16.5, 21.0]},
+    {"id": "tub",      "type": "tub",          "room": "bath",    "at": [12.0, 24.0]},
+    {"id": "washer",   "type": "washer",       "room": "laundry", "at": [20.0, 16.5]},
+    {"id": "dryer",    "type": "dryer",        "room": "laundry", "at": [22.0, 16.5]},
+    {"id": "wh",       "type": "water_heater", "room": "mech",    "at": [24.5, 16.5], "fuel": "electric"},
+    {"id": "ahu",      "type": "furnace",      "room": "mech",    "at": [24.0, 14.0], "fuel": "natural_gas"},
+    {"id": "panel",    "type": "panel",        "room": "mech",    "at": [25.5, 15.0]},
+    {"id": "manifold", "type": "manifold",     "room": "mech",    "at": [23.5, 15.0]},
+    {"id": "stack",    "type": "stack",        "room": "bath",    "at": [17.0, 22.0]}
+  ]
+}
